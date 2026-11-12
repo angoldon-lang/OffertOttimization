@@ -35,6 +35,17 @@ Prova guidata con i demo (`python scripts/make_demo.py` li rigenera):
 | Costo condiviso da ripartire | `offerta_due_voci.docx` + `quotazione_costo_condiviso.xlsx` (abbinare il «Bundle» con ripartizione proporzionale) |
 | Template, stile fuori standard, sezioni e dati mancanti | `offerta_template_dati_mancanti.docx` + template `template_aziendale.docx` |
 
+## Docker
+
+```bash
+docker compose up -d --build        # http://127.0.0.1:18080
+```
+- Porta sull'host: `18080` (cambiala con `HOST_PORT=19090 docker compose up -d`). Dentro il container l'app usa la 8000, **non pubblicata** altrove.
+- Pubblicata solo su `127.0.0.1` (l'app non ha autenticazione). Per aprirla alla rete mettila dietro un reverse proxy con SSO.
+- I profili in `./profiles` sono montati in sola lettura: modificali senza ricostruire. Variabili (`AD_*`, `AD_LLM_*`) da shell o file `.env` accanto al compose.
+- OCR per PDF scansionati: `WITH_OCR=1 docker compose up -d --build`.
+- Stop: `docker compose down` (le sessioni sono in memoria e si perdono).
+
 ## Flusso utente
 
 1. **Carica** offerta (obbligatoria), template, quotazioni, costi diretti interni (es. giornate × costo giornaliero), scegli il profilo. Il template è il riferimento per stili/struttura; il profilo fornisce le regole mancanti (logo, palette, checklist campi, sezioni obbligatorie).

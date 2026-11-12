@@ -1,0 +1,26 @@
+services:
+  adreview:
+    build:
+      context: .
+      args:
+        WITH_OCR: ${WITH_OCR:-0}
+    container_name: adreview
+    # Porta HOST configurabile (default 18080, insolita per evitare conflitti) e legata a 127.0.0.1:
+    # l'app non ha autenticazione, quindi NON è raggiungibile dalla rete. Dentro il container resta 8000.
+    ports:
+      - "127.0.0.1:${HOST_PORT:-18080}:8000"
+    environment:
+      AD_ROUNDING: ${AD_ROUNDING:-half_up}
+      AD_DECIMALS: ${AD_DECIMALS:-2}
+      AD_MARGIN_THRESHOLD: ${AD_MARGIN_THRESHOLD:-20}
+      AD_LLM_PROVIDER: ${AD_LLM_PROVIDER:-none}
+      AD_LLM_API_KEY: ${AD_LLM_API_KEY:-}
+      AD_LLM_MODEL: ${AD_LLM_MODEL:-claude-sonnet-5-5}
+    volumes:
+      - ./profiles:/app/profiles:ro     # modifica i profili senza ricostruire l'immagine
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
