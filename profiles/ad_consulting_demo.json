@@ -1,0 +1,29 @@
+{
+  "id": "demo",
+  "name": "AD Consulting – profilo DEMO (valori fittizi, da sostituire con quelli ufficiali)",
+  "company_name": "AD Consulting S.p.A.",
+  "fonts": {"body": "Calibri", "heading": "Calibri"},
+  "sizes": {"body": 11, "h1": 16, "h2": 13, "h3": 12, "title": 26, "table": 9.5},
+  "palette": {"primary": "1F3A5F", "secondary": "2E7D9A", "text": "222222", "accent": "C8102E",
+              "table_header_text": "FFFFFF", "table_band": "EEF3F8"},
+  "margins_cm": {"top": 2.5, "bottom": 2.2, "left": 2.3, "right": 2.3},
+  "logo": "assets/logo_demo.png",
+  "cover": true,
+  "header_text": "AD Consulting S.p.A. – Offerta commerciale",
+  "footer_text": "Documento riservato – AD Consulting S.p.A.",
+  "required_sections": [
+    {"title": "Oggetto dell'offerta", "aliases": ["oggetto", "premessa", "introduzione"]},
+    {"title": "Perimetro della fornitura", "aliases": ["perimetro", "ambito della fornitura", "descrizione della fornitura", "ambito"]},
+    {"title": "Condizioni economiche", "aliases": ["offerta economica", "corrispettivi", "prezzi"]},
+    {"title": "Durata e rinnovo", "aliases": ["durata", "durata del contratto"]},
+    {"title": "Validità dell'offerta", "aliases": ["validita", "validità"]},
+    {"title": "Condizioni di pagamento", "aliases": ["pagamenti", "modalità di pagamento", "termini di pagamento"]}
+  ],
+  "required_fields": ["cliente", "numero_offerta", "data_offerta", "oggetto", "perimetro", "prezzi",
+                      "durata", "rinnovo", "validita", "pagamento"],
+  "table_headers_expected": ["descrizione", "quantità", "prezzo unitario", "importo"],
+  "typos": {"sopratutto": "soprattutto", "perche": "perché", "perchè": "perché", "propio": "proprio",
+            "effetuare": "effettuare", "quantita": "quantità", "attivita": "attività"},
+  "known_entities": [],
+  "margin_threshold_pct": 20
+}

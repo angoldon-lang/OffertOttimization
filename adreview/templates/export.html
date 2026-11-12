@@ -1,0 +1,17 @@
+{% extends "review_base.html" %}
+{% block content %}
+<h2>Esporta</h2>
+<div class="cards">
+  <div class="card"><h3>DOCX cliente revisionato</h3><p>Copia impaginata secondo template/profilo. Contiene solo i contenuti dell'offerta originale più le modifiche che hai approvato. <b>Nessun costo, margine o dato di quotazione fornitore.</b></p>
+    <a class="btn primary" href="/review/{{ s.id }}/download/cliente.docx">Scarica DOCX cliente</a>
+    <p class="muted">Verifica automatica: {% if a.verify_problems %}<span class="badge err">{{ a.verify_problems|join('; ') }}</span>{% else %}il file si riapre e conserva tabelle, immagini, link, sezioni e testo{% endif %}.</p></div>
+  <div class="card priv"><h3>Report interno (RISERVATO)</h3><p>Riepilogo commerciale, esito dei controlli, anomalie aperte, calcoli e (se disponibile) margine.</p>
+    <a class="btn" href="/review/{{ s.id }}/download/report.docx">Scarica report interno</a></div>
+  <div class="card priv"><h3>XLSX di marginalità (RISERVATO)</h3>
+    {% if a.margin %}<p>Formule vive, dati e riferimenti alle fonti. Stato del calcolo: <b>{{ a.margin.status }}</b>.</p><a class="btn" href="/review/{{ s.id }}/download/margine.xlsx">Scarica XLSX marginalità</a>
+    {% else %}<p class="muted">Non disponibile: carica una quotazione fornitore o inserisci i costi nella scheda Margine.</p>{% endif %}</div>
+</div>
+<h2>Anomalie ancora aperte ({{ a.open_findings|length }})</h2>
+<ul>{% for f in a.open_findings %}<li><span class="badge {{ f.status|cls }}">{{ f.status }}</span> {{ f.title }} – <span class="muted">{{ f.location.label }}</span></li>{% else %}<li>Nessuna.</li>{% endfor %}</ul>
+<h2>Servizio AI</h2><p>{{ ai_text }} {% if s.llm_consent %}<b>Consenso attivo per questa revisione.</b>{% endif %}</p>
+{% endblock %}

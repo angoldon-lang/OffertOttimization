@@ -1,0 +1,61 @@
+{% extends "review_base.html" %}
+{% from "_macros.html" import badge, change_box %}
+{% block content %}
+<h2>Righe economiche estratte (tabella di revisione)</h2>
+<p class="muted">Ogni riga indica la fonte nell'offerta. Aritmetica decimale; arrotondamento «{{ a.rounding }}», {{ a.decimals }} decimali (configurabile). Le modifiche a prezzi, quantità e sconti diventano
+  <b>proposte da approvare</b>: il Word resta invariato fino all'approvazione, poi tutto viene ricalcolato. Periodicità, tipo e durata sono conferme che non modificano il Word.</p>
+<form method="post" action="/review/{{ s.id }}/lines">
+<label class="inline">Durata contratto (mesi) – {% if a.fields.durata.present %}letta dal documento: <b>{{ a.fields.durata.value }}</b>{% else %}non indicata nel documento{% endif %}
+  <input name="mesi" size="4" value="{{ s.confirm.mesi or '' }}" placeholder="{{ a.econ.months or '' }}" inputmode="numeric"> <span class="muted">(vuoto = usa il documento)</span></label>
+<table class="grid econ">
+  <thead><tr><th>Fonte</th><th>Descrizione / SKU</th><th>Tipo</th><th>Periodicità</th><th>Q.tà</th><th>Prezzo unit.</th><th>Sconto %</th><th>Importo riportato</th><th>Formula</th><th>Calcolato</th><th>Diff.</th><th>Esito</th></tr></thead>
+  <tbody>
+  {% for l in a.econ.lines %}
+  <tr class="row-{{ l.status|cls }}">
+    <td class="loc">{{ l.source }}</td>
+    <td>{{ l.desc }}<div class="muted">{{ l.sku }}</div></td>
+    <td><select name="c|{{ l.id }}|kind">{% for k, lab in KINDS.items() %}<option value="{{ k }}" {{ 'selected' if l.kind == k }}>{{ lab }}</option>{% endfor %}</select></td>
+    <td><select name="c|{{ l.id }}|periodicita"><option value="">{{ '— da confermare —' if not l.periodicity }}</option>{% for k, lab in PERIODS.items() %}<option value="{{ k }}" {{ 'selected' if l.periodicity == k }}>{{ lab }}</option>{% endfor %}</select>
+      <div class="muted">{{ {'documento':'dal documento','confermata':'confermata','ambigua':'AMBIGUA'}[l.period_src] }}</div></td>
+    <td><input name="e|{{ l.id }}|qty" size="5" value="{{ l.qty|num(0 if l.qty is not none and l.qty == l.qty.to_integral_value() else 2) if l.qty is not none else '' }}" {{ 'disabled' if l.col_qty is none }}></td>
+    <td><input name="e|{{ l.id }}|unit" size="9" value="{{ l.unit|num if l.unit is not none else '' }}" {{ 'disabled' if l.col_unit is none }}></td>
+    <td><input name="e|{{ l.id }}|disc" size="5" value="{{ l.disc|num(0 if l.disc is not none and l.disc == l.disc.to_integral_value() else 2) if l.disc is not none else '' }}" {{ 'disabled' if l.col_disc is none }}></td>
+    <td><input name="e|{{ l.id }}|amount" size="10" value="{{ l.reported|num if l.reported is not none else '' }}" {{ 'disabled' if l.col_amount is none }}></td>
+    <td class="muted">{{ l.formula }}</td>
+    <td>{{ l.calc|eur if l.calc is not none else '—' }}</td>
+    <td>{{ l.diff|eur if l.diff is not none else '—' }}</td>
+    <td>{{ badge(l.status) }}<div class="muted">{{ l.note }}</div></td>
+  </tr>
+  {% else %}<tr><td colspan="12">Nessuna tabella economica riconosciuta nel documento.</td></tr>{% endfor %}
+  </tbody>
+</table>
+<button class="btn primary">Salva conferme e proponi modifiche</button>
+</form>
+
+<h2>Totali, subtotali, sconti e IVA</h2>
+<table class="grid">
+  <thead><tr><th>Fonte</th><th>Voce</th><th>Tipo</th><th>Formula</th><th>Valore riportato</th><th>Valore calcolato</th><th>Differenza</th><th>Esito</th></tr></thead>
+  <tbody>
+  {% for t in a.econ.totals %}
+  <tr class="row-{{ t.status|cls }}"><td class="loc">Tabella {{ t.table + 1 }}, riga {{ t.row + 1 }}</td><td>{{ t.label }}</td><td>{{ t.ctype }}</td><td class="muted">{{ t.formula }}</td>
+    <td>{{ t.reported|eur if t.reported is not none else '—' }}</td><td>{{ t.calc|eur if t.calc is not none else '—' }}</td><td>{{ t.diff|eur if t.diff is not none else '—' }}</td>
+    <td>{{ badge(t.status) }}<div class="muted">{{ t.note }}</div></td></tr>
+  {% else %}<tr><td colspan="8">Nessun totale riconosciuto.</td></tr>{% endfor %}
+  </tbody>
+</table>
+{% if a.econ.ambiguous %}<div class="notice">Da confermare: {{ a.econ.ambiguous|join(' · ') }}</div>{% endif %}
+
+<h2>Modifiche in attesa di approvazione</h2>
+<table class="grid">
+  <thead><tr><th>Posizione</th><th>Modifica</th><th>Azione</th></tr></thead>
+  <tbody>
+  {% for i in range(a.findings|length) %}{% set f = a.findings[i] %}
+    {% if f.change and f.check == 'calcoli' and a.states[i] in ('Da approvare','Rifiutata') %}
+    <tr><td class="loc">{{ f.location.label }}</td><td><b>{{ f.title }}</b><br>{{ f.evidence }}</td><td>{{ change_box(f.change, f, s, a.states[i], 'calcoli') }}</td></tr>
+    {% endif %}
+  {% endfor %}
+  </tbody>
+</table>
+<h2>Modifiche approvate (già riportate nel Word cliente)</h2>
+{% for c in a.history %}<div class="diff"><b>{{ c.label }}</b> ({{ c.origin }}): <del>{{ c.ctx_before or c.before }}</del> → <ins>{{ c.ctx_after }}</ins></div>{% else %}<p class="muted">Nessuna: il Word mantiene i valori originali.</p>{% endfor %}
+{% endblock %}

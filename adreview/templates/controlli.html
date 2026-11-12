@@ -1,0 +1,25 @@
+{% extends "review_base.html" %}
+{% from "_macros.html" import badge, finding_row %}
+{% block content %}
+<h2>Esito per controllo</h2>
+<table class="grid">
+  <thead><tr><th>Controllo</th><th>Esito</th><th>Rilievi aperti</th><th></th></tr></thead>
+  <tbody>
+  {% for c in a.controls %}
+  <tr><td>{{ c.name }}</td><td>{{ badge(c.status) }}</td><td>{{ c.n }}</td><td><a href="?check={{ c.id }}{% if show_all %}&tutti=1{% endif %}">filtra</a></td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="muted">I controlli sono indipendenti: l'assenza di una quotazione fornitore non impedisce revisione Word, verifica dei calcoli e riepilogo.</p>
+
+<h2>Rilievi {% if flt_check %}· {{ CONTROLS[flt_check] }} <a href="?">(tutti)</a>{% endif %}</h2>
+<p class="muted">Posizione: la pagina non è determinabile in modo affidabile da un DOCX, quindi si indicano sezione, tabella e riga.
+  Mostrati {{ rows|length }} rilievi{% if not show_all %} (esclusi {{ n_conformi }} controlli conformi – <a href="?tutti=1{% if flt_check %}&check={{ flt_check }}{% endif %}">mostra tutti</a>){% else %} – <a href="?{% if flt_check %}check={{ flt_check }}{% endif %}">nascondi i conformi</a>{% endif %}.
+  Filtro esito: {% for st in ['Errore','Da verificare','Non verificabile','Conforme','Non applicabile'] %}<a href="?esito={{ st }}{% if flt_check %}&check={{ flt_check }}{% endif %}">{{ st }}</a> · {% endfor %}</p>
+<table class="grid findings">
+  <thead><tr><th>Esito</th><th>Controllo</th><th>Rilievo</th><th>Posizione</th><th>Evidenza</th><th>Correzione proposta</th><th>Stato revisione</th></tr></thead>
+  <tbody>
+  {% for i, f in rows %}{{ finding_row(i, f, a, s, 'controlli') }}{% else %}<tr><td colspan="7">Nessun rilievo con questi filtri.</td></tr>{% endfor %}
+  </tbody>
+</table>
+{% endblock %}

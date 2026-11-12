@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>Nuova revisione</h1>
+{% if error %}<div class="notice err">{{ error }}</div>{% endif %}
+<form method="post" action="/review" enctype="multipart/form-data" class="card form">
+  <fieldset>
+    <legend>1 · Offerta cliente (obbligatoria)</legend>
+    <label>File DOCX dell'offerta <input type="file" name="offer" accept=".docx" required></label>
+  </fieldset>
+  <fieldset>
+    <legend>2 · Profilo e template (facoltativi)</legend>
+    <label>Profilo aziendale
+      <select name="profile">{% for p in profiles.values() %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}</select></label>
+    <label>Template aziendale DOCX <input type="file" name="template" accept=".docx"></label>
+    <p class="muted">Con un template, stili e struttura del template fanno da riferimento; il profilo fornisce le regole mancanti (logo, palette, checklist campi).</p>
+  </fieldset>
+  <fieldset>
+    <legend>3 · Quotazioni fornitore e costi interni (facoltativi – per il report di marginalità)</legend>
+    <label>Quotazioni fornitore (XLSX o PDF, anche più file) <input type="file" name="quotes" accept=".xlsx,.xlsm,.pdf" multiple></label>
+    <table class="grid" id="ic">
+      <thead><tr><th>Costo diretto interno</th><th>Quantità (es. giornate)</th><th>Costo unitario €</th><th>Periodicità</th></tr></thead>
+      <tbody>
+      {% for i in range(3) %}
+      <tr><td><input name="ic_desc" placeholder="es. Installazione on-site"></td><td><input name="ic_qty" inputmode="decimal"></td><td><input name="ic_unit" inputmode="decimal"></td>
+        <td><select name="ic_per"><option value="una_tantum">Una tantum</option><option value="annuale">Annuale</option><option value="mensile">Mensile</option></select></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <button type="button" class="btn small" onclick="var t=document.querySelector('#ic tbody');t.appendChild(t.rows[0].cloneNode(true));for(const i of t.rows[t.rows.length-1].querySelectorAll('input'))i.value=''">+ riga</button>
+  </fieldset>
+  <fieldset>
+    <legend>4 · Servizio AI esterno</legend>
+    <p>{{ ai_text }}</p>
+    {% if settings.llm_enabled %}<label class="check"><input type="checkbox" name="llm_consent"> Consento l'invio del testo dei paragrafi per proporre correzioni testuali</label>{% endif %}
+  </fieldset>
+  <button class="btn primary">Avvia la revisione</button>
+  <p class="muted">Limite per file: {{ max_mb }} MB. I file restano in memoria finché non elimini la revisione o riavvii l'applicazione.</p>
+</form>
+{% endblock %}

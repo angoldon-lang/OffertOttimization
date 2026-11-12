@@ -1,0 +1,11 @@
+{% extends "review_base.html" %}
+{% from "_macros.html" import badge %}
+{% block content %}
+<p class="notice priv">Riepilogo INTERNO (include il margine): non destinato al cliente.</p>
+{% for sec, rows in a.summary.items() %}
+<h2>{{ sec }}</h2>
+<table class="grid"><thead><tr><th>Campo</th><th>Valore</th><th>Fonte nell'offerta</th><th>Stato</th><th>Note</th></tr></thead><tbody>
+{% for r in rows %}<tr><td>{{ r.label }}</td><td><b>{{ r.value }}</b></td><td class="loc">{{ r.source }}</td><td>{{ badge(r.status) if r.status in ('Conforme','Da verificare','Errore','Non verificabile') else r.status }}</td><td class="muted">{{ r.note }}</td></tr>{% endfor %}
+</tbody></table>
+{% endfor %}
+{% endblock %}

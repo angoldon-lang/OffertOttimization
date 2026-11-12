@@ -1,0 +1,26 @@
+{% extends "review_base.html" %}
+{% from "_macros.html" import badge, finding_row %}
+{% block content %}
+<h2>Riferimento usato</h2>
+<table class="grid"><thead><tr><th>Elemento</th><th>Fonte</th></tr></thead><tbody>
+{% for k, v in a.std.sources.items() %}<tr><td>{{ k }}</td><td>{{ 'template «' ~ s.template_name ~ '»' if v == 'template' else 'profilo «' ~ profile.name ~ '»' }}</td></tr>{% endfor %}
+</tbody></table>
+<h2>Sezioni obbligatorie</h2>
+<table class="grid"><thead><tr><th>Sezione richiesta</th><th>Trovata nel documento come</th></tr></thead><tbody>
+{% for sec in a.template_info.sections %}<tr><td>{{ sec.title }}</td><td>{% if sec.found %}{{ sec.found }}{% else %}<span class="badge err">ASSENTE</span>{% endif %}</td></tr>{% endfor %}
+</tbody></table>
+{% set groups = [('Interventi che richiedono azione (sostanziali)', 'sub'), ('Sistemato automaticamente (differenze grafiche)', 'auto')] %}
+<h2>Mancanze e scostamenti che richiedono intervento</h2>
+<table class="grid findings"><thead><tr><th>Esito</th><th>Controllo</th><th>Rilievo</th><th>Posizione</th><th>Evidenza</th><th>Correzione proposta</th><th>Stato revisione</th></tr></thead><tbody>
+{% for i in range(a.findings|length) %}{% set f = a.findings[i] %}
+  {% if f.check in ('template','segnaposto','impaginazione') and not f.auto_fixed and f.status != 'Conforme' %}{{ finding_row(i, f, a, s, 'template') }}{% endif %}
+{% endfor %}
+</tbody></table>
+<h2>Sistemato automaticamente nella copia DOCX</h2>
+<table class="grid findings"><thead><tr><th>Esito</th><th>Controllo</th><th>Rilievo</th><th>Posizione</th><th>Evidenza</th><th>Intervento</th><th>Stato</th></tr></thead><tbody>
+{% for i in range(a.findings|length) %}{% set f = a.findings[i] %}
+  {% if f.auto_fixed %}{{ finding_row(i, f, a, s, 'template') }}{% endif %}
+{% endfor %}
+</tbody></table>
+<p class="muted">Clausole e dati commerciali non vengono mai modificati dall'impaginazione. Larghezze di colonna, tabelle annidate, caselle di testo e revisioni tracciate non sono toccati.</p>
+{% endblock %}

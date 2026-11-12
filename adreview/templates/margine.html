@@ -1,0 +1,104 @@
+{% extends "review_base.html" %}
+{% from "_macros.html" import badge %}
+{% block content %}
+<p class="notice priv">Sezione RISERVATA: costi, margini e quotazioni non entrano mai nel DOCX cliente.</p>
+{% set m = a.margin %}
+<h2>Quotazioni e costi</h2>
+<form method="post" action="/review/{{ s.id }}/margin/quotes" enctype="multipart/form-data" class="inline">
+  <label>Aggiungi quotazione fornitore (XLSX/PDF) <input type="file" name="quotes" accept=".xlsx,.xlsm,.pdf" multiple required></label> <button class="btn small">Carica</button>
+</form>
+{% for q in s.quotes %}<div class="muted">📄 {{ q.filename }}: {{ q.lines|length }} righe · valuta {{ q.currency or '—' }} · validità {{ q.valid_until|dt if q.valid_until else 'non indicata' }}
+  {% for w in q.warnings %}<br><span class="badge unk">{{ w }}</span>{% endfor %}</div>{% endfor %}
+
+{% if not m %}
+<p>Nessun costo caricato: la revisione Word, i calcoli e il riepilogo restano disponibili. Carica una quotazione oppure aggiungi i costi a mano qui sotto.</p>
+{% else %}
+<h2>Risultato</h2>
+<p>Stato del calcolo: <span class="badge {{ 'ok' if m.status == 'completo' else 'warn' }}">{{ m.status|upper }}</span>
+  {% if m.status != 'completo' %}– margine <b>parziale</b>: comprende solo {{ m.included|join(', ') or 'nessuna voce' }}.{% endif %}
+  {% if a.quote_validity %}· Validità quotazione: {{ badge(a.quote_validity[0]) }} <span class="muted">{{ a.quote_validity[1] }}</span>{% endif %}</p>
+{% for msg in m.messages %}<div class="notice">{{ msg }}</div>{% endfor %}
+<form method="post" action="/review/{{ s.id }}/margin/settings" class="inline">
+  Base del margine mostrato nel riepilogo:
+  <select name="margin_base"><option value="solo_fornitore" {{ 'selected' if s.margin_base == 'solo_fornitore' }}>solo costi fornitore</option><option value="con_interni" {{ 'selected' if s.margin_base == 'con_interni' }}>con costi diretti interni</option></select>
+  Soglia margine %: <input name="threshold" size="4" value="{{ a.threshold|num(0) }}">
+  {% set curs = [] %}{% for c in s.costs %}{% if c.currency != 'EUR' and c.currency not in curs %}{% set _ = curs.append(c.currency) %}{% endif %}{% endfor %}
+  {% for cur in curs %}Cambio {{ cur }}→EUR (1 {{ cur }} = ? €): <input name="fx_{{ cur }}" size="6" value="{{ s.fx.get(cur)|num(4) if s.fx.get(cur) else '' }}" required> {% endfor %}
+  <button class="btn small">Applica</button>
+</form>
+<table class="grid">
+  <thead><tr><th>Voce</th><th>Descrizione</th><th>Ricavo netto IVA (contratto)</th><th>Costo fornitore</th><th>Costo interno</th><th>Margine solo fornitore</th><th>%</th>{% if m.has_internal %}<th>Margine con interni</th><th>%</th>{% endif %}<th>Stato</th><th>Criticità</th></tr></thead>
+  <tbody>
+  {% for ml in m.lines + m.options %}
+  {% set ms = ml.margin_supplier() %}{% set mt = ml.margin_total() %}
+  {% set mp = ml.pct(ms, ml.revenue) %}
+  <tr class="row-{{ 'err' if ms is not none and ms < 0 else ('warn' if ml.status != 'completa' or (mp is not none and mp < a.threshold) else 'ok') }}">
+    <td class="loc">{{ ml.sale.id }}{% if ml.sale.kind == 'opzione' %}<div class="tag">opzione</div>{% endif %}</td><td>{{ ml.sale.desc }}</td>
+    <td>{{ ml.revenue|qnum }}</td><td>{{ ml.supplier_cost|qnum }}</td><td>{{ ml.internal_cost|qnum }}</td>
+    <td>{{ ms|qnum }}</td><td>{{ mp|qpct }}{% if ms is not none and ms < 0 %} <span class="badge err">negativo</span>{% elif mp is not none and mp < a.threshold %} <span class="badge warn">sotto soglia</span>{% endif %}</td>
+    {% if m.has_internal %}<td>{{ mt|qnum }}</td><td>{{ ml.pct(mt, ml.revenue)|qpct }}</td>{% endif %}
+    <td>{{ ml.status }}</td>
+    <td class="muted">{{ (ml.issues + ml.warnings)|join('; ') }}
+      {% if ml.status == 'mancante' and ml.revenue is not none and not ml.cost_ids %}
+      <form method="post" action="/review/{{ s.id }}/margin/no-cost/{{ ml.sale.id }}" class="inline"><button class="btn small">Conferma: nessun costo</button></form>{% endif %}</td>
+  </tr>
+  {% endfor %}
+  <tr class="total"><td colspan="2"><b>Totale voci incluse ({{ 'completo' if m.status == 'completo' else 'PARZIALE' }})</b></td>
+    <td><b>{{ m.revenue|qnum }}</b></td><td><b>{{ m.supplier_cost|qnum }}</b></td><td><b>{{ m.internal_cost|qnum }}</b></td>
+    <td><b>{{ m.margin_supplier|qnum }}</b></td><td><b>{{ m.pct_supplier|qpct }}</b></td>{% if m.has_internal %}<td><b>{{ m.margin_total|qnum }}</b></td><td><b>{{ m.pct_total|qpct }}</b></td>{% endif %}<td colspan="2">margine % = margine ÷ ricavo complessivo</td></tr>
+  </tbody>
+</table>
+<h3>Per anno</h3>
+{% if m.years %}
+<table class="grid"><thead><tr><th>Anno</th><th>Ricavo</th><th>Costo fornitore</th><th>Costo interno</th><th>Margine</th><th>%</th></tr></thead><tbody>
+{% for y in m.years %}<tr><td>{{ y.anno }}</td><td>{{ y.ricavo|qnum }}</td><td>{{ y.costo_fornitore|qnum }}</td><td>{{ y.costo_interno|qnum }}</td><td>{{ y.margine|qnum }}</td><td>{{ y.margine_pct|qpct }}</td></tr>{% endfor %}
+</tbody></table>{% else %}<p class="muted">{{ m.years_note }}</p>{% endif %}
+
+<h2>Abbinamento costi ↔ voci di vendita</h2>
+{% if a.allocs.values()|selectattr('suggested')|list %}
+<form method="post" action="/review/{{ s.id }}/margin/confirm-suggestions"><p>Alcuni abbinamenti sono <b>suggeriti</b> (SKU, descrizione, quantità, periodo) e non ancora confermati. <button class="btn ok">Conferma tutti i suggerimenti</button></p></form>{% endif %}
+{% for c in s.costs %}
+{% set al = a.allocs[c.id] %}{% set cc = (m.costs|selectattr('cost.id','equalto',c.id)|list)[0] %}
+<div class="card cost {{ 'warnc' if cc.issues }}">
+  <form method="post" action="/review/{{ s.id }}/margin/cost/{{ c.id }}" class="costform">
+    <div class="ctitle"><b>{{ c.id }}</b> · {{ 'costo interno' if c.category == 'interno' else 'costo fornitore' }} · <span class="muted">{{ c.source }}</span>{% if c.uncertain %} <span class="badge warn">estrazione incerta</span>{% endif %}</div>
+    <label>SKU <input name="sku" size="9" value="{{ c.sku }}"></label>
+    <label>Descrizione <input name="desc" size="26" value="{{ c.desc }}"></label>
+    <label>Q.tà <input name="qty" size="5" value="{{ c.qty|num(2) if c.qty is not none else '' }}"></label>
+    <label>Costo unit. <input name="unit_cost" size="8" value="{{ c.unit_cost|num if c.unit_cost is not none else '' }}"></label>
+    <label>Totale <input name="total" size="9" value="{{ c.total|num if c.total is not none else '' }}"></label>
+    <label>Valuta <input name="currency" size="3" value="{{ c.currency }}"></label>
+    <label>Periodicità <select name="periodicity"><option value="">— da confermare —</option>{% for k, lab in COST_PERIODS.items() %}<option value="{{ k }}" {{ 'selected' if c.periodicity == k }}>{{ lab }}</option>{% endfor %}</select></label>
+    <label>Mesi coperti <input name="period_months" size="3" value="{{ c.period_months or '' }}"></label>
+    <label class="check"><input type="checkbox" name="base_confirmed" {{ 'checked' if c.base_confirmed }}> base confermata</label>
+    <label class="check"><input type="checkbox" name="vat_included" {{ 'checked' if c.vat_included }}> IVA inclusa</label>
+    <label>IVA % <input name="vat_pct" size="3" value="{{ c.vat_pct|num(0) if c.vat_pct is not none else '' }}"></label>
+    <button class="btn small">Salva</button>
+  </form>
+  <form method="post" action="/review/{{ s.id }}/margin/alloc/{{ c.id }}" class="costform">
+    <b>Abbinamento</b>:
+    <select name="mode">{% for k, lab in [('none','non abbinato'),('single','100% a una voce'),('equal','ripartisci in parti uguali'),('proportional','ripartisci proporzionalmente al ricavo'),('manual','ripartisci con percentuali manuali')] %}<option value="{{ k }}" {{ 'selected' if al.mode == k }}>{{ lab }}</option>{% endfor %}</select>
+    {% for sl in a.sales if sl.kind != 'alternativa' %}
+      <label class="check"><input type="checkbox" name="targets" value="{{ sl.id }}" {{ 'checked' if sl.id in al.targets }}> {{ sl.id }} {{ sl.desc[:24] }}</label>
+      <input name="pct|{{ sl.id }}" size="3" placeholder="%" value="{{ al.pcts.get(sl.id)|num(2) if al.pcts.get(sl.id) is not none else '' }}" title="percentuale (solo ripartizione manuale)">
+    {% endfor %}
+    <button class="btn small">Applica</button>
+    {% if al.suggested %}<span class="badge warn">suggerito ({{ al.score }}) – da confermare</span>{% endif %}
+  </form>
+  <div class="muted">Costo normalizzato (contratto, EUR netto IVA): <b>{{ cc.contract|qnum }}</b> · criterio: {{ al.criterion }}
+    {% for i in cc.issues %}<div class="badge err">{{ i }}</div>{% endfor %}{% for w in cc.warnings %}<div class="badge warn">{{ w }}</div>{% endfor %}
+  <form method="post" action="/review/{{ s.id }}/margin/delete/{{ c.id }}" class="inline" onsubmit="return confirm('Rimuovere questa riga di costo?')"><button class="btn small">Rimuovi</button></form>
+  {% if al.mode == 'single' and c.id not in s.qty_confirmed %}<form method="post" action="/review/{{ s.id }}/margin/confirm-qty/{{ c.id }}" class="inline"><button class="btn small" title="Conferma che la quantità del costo è confrontabile con quella dell'offerta">Conferma confronto quantità</button></form>{% endif %}
+</div>
+{% endfor %}
+{% endif %}
+
+<h2>Aggiungi una riga di costo (griglia manuale)</h2>
+<form method="post" action="/review/{{ s.id }}/margin/add" class="card costform">
+  <label>Categoria <select name="category"><option value="fornitore">costo fornitore</option><option value="interno">costo diretto interno (es. giornate)</option></select></label>
+  <label>SKU <input name="sku" size="9"></label><label>Descrizione <input name="desc" size="26"></label>
+  <label>Q.tà <input name="qty" size="5"></label><label>Costo unitario <input name="unit_cost" size="8"></label><label>Valuta <input name="currency" size="3" value="EUR"></label>
+  <label>Periodicità <select name="periodicity">{% for k, lab in COST_PERIODS.items() %}<option value="{{ k }}">{{ lab }}</option>{% endfor %}</select></label>
+  <button class="btn">Aggiungi</button>
+</form>
+{% endblock %}

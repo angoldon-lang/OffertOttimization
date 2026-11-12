@@ -1,0 +1,38 @@
+{% macro badge(st) %}<span class="badge {{ st|cls }}">{{ st }}</span>{% endmacro %}
+
+{% macro change_box(ch, f, s, state, tab) %}
+  <div class="diff">
+    <div><b>Prima</b>: {{ ch|diff_before }}</div>
+    <div><b>Dopo</b>: {{ ch|diff_after }}</div>
+    {% if ch.reason %}<div class="muted">{{ ch.reason }}</div>{% endif %}
+  </div>
+  {% if state == 'Da approvare' %}
+  <form method="post" action="/review/{{ s.id }}/change/{{ ch.key }}/approve?next={{ tab }}" class="inline"><button class="btn ok">Approva e applica al Word</button></form>
+  <form method="post" action="/review/{{ s.id }}/change/{{ ch.key }}/reject?next={{ tab }}" class="inline"><button class="btn">Rifiuta</button></form>
+  {% elif state == 'Rifiutata' %}
+  <form method="post" action="/review/{{ s.id }}/change/{{ ch.key }}/reopen?next={{ tab }}" class="inline"><button class="btn">Riapri</button></form>
+  {% endif %}
+{% endmacro %}
+
+{% macro finding_row(i, f, a, s, tab) %}
+{% set state = a.states[i] %}
+<tr class="row-{{ f.status|cls }}">
+  <td>{{ badge(f.status) }}{% if f.kind %}<div class="tag">{{ f.kind }}</div>{% endif %}</td>
+  <td>{{ CONTROLS[f.check] }}</td>
+  <td><b>{{ f.title }}</b></td>
+  <td class="loc">{{ f.location.label }}</td>
+  <td>{{ f.evidence }}</td>
+  <td>{{ f.proposal }}
+    {% if f.change %}{{ change_box(f.change, f, s, state, tab) }}{% endif %}
+  </td>
+  <td><span class="state">{{ state }}</span>
+    {% if not f.change and f.status in ('Errore','Da verificare','Non verificabile') and not f.auto_fixed %}
+      {% if f.id in s.acks %}
+      <form method="post" action="/review/{{ s.id }}/ack/{{ f.id }}?next={{ tab }}" class="inline"><input type="hidden" name="on" value="0"><button class="btn small">Riapri</button></form>
+      {% else %}
+      <form method="post" action="/review/{{ s.id }}/ack/{{ f.id }}?next={{ tab }}" class="inline"><input type="hidden" name="on" value="1"><button class="btn small">Presa visione</button></form>
+      {% endif %}
+    {% endif %}
+  </td>
+</tr>
+{% endmacro %}

@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}{{ s.offer_name }}{% endblock %}
+{% block body %}
+<section class="head">
+  <div>
+    <h1>{{ s.offer_name }}</h1>
+    <p class="muted">Cliente: <b>{{ a.fields.cliente.value }}</b> · Offerta n. <b>{{ a.fields.numero_offerta.value }}</b> · Data <b>{{ a.fields.data_offerta.value }}</b>
+      · Profilo: {{ profile.name }}{% if s.template_name %} · Template: {{ s.template_name }}{% else %} · Nessun template (si usa il profilo){% endif %}</p>
+  </div>
+  <form method="post" action="/review/{{ s.id }}/delete" onsubmit="return confirm('Eliminare la revisione e tutti i dati caricati?')"><button class="btn small">Elimina dati</button></form>
+</section>
+<nav class="tabs">
+  {% for key, label in TABS %}<a href="/review/{{ s.id }}/{{ key }}" class="{{ 'active' if key == tab }}">{{ label }}</a>{% endfor %}
+</nav>
+{% if s.notices %}<div class="notice">{% for n in s.notices[-4:] %}<div>{{ n }}</div>{% endfor %}</div>{% endif %}
+{% block content %}{% endblock %}
+{% endblock %}
