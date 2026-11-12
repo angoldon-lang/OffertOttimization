@@ -279,6 +279,8 @@ def create_app(settings: Settings | None = None, service: Service | None = None)
         stem = re.sub(r"\.docx$", "", s.offer_name, flags=re.I)
         if what == "cliente.docx":
             return attach(svc.export_client_docx(s), f"{stem} - revisionata.docx", DOCX)
+        if what == "revisione.docx":
+            return attach(svc.export_tracked(s), f"{stem} - in revisione.docx", DOCX)
         if what == "report.docx":
             return attach(svc.export_report(s), f"{stem} - report interno RISERVATO.docx", DOCX)
         if what == "margine.xlsx":

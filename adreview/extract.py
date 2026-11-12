@@ -15,7 +15,9 @@ MONTHS = {m: i + 1 for i, m in enumerate(
 WORDS = {"un": 1, "uno": 1, "una": 1, "due": 2, "tre": 3, "quattro": 4, "cinque": 5, "sei": 6, "dodici": 12,
          "diciotto": 18, "ventiquattro": 24, "trentasei": 36, "quarantotto": 48, "sessanta": 60}
 WORD_RE = "|".join(WORDS)
-DATE_RE = (r"\d{1,2}\s*[/\-.]\s*\d{1,2}\s*[/\-.]\s*\d{2,4}|\d{1,2}\s*°?\s*(?:" + "|".join(MONTHS) + r")\s+\d{4}")
+EN_MONTHS = {m: i + 1 for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"])}
+DATE_RE = (r"\d{1,2}\s*[/\-.]\s*\d{1,2}\s*[/\-.]\s*\d{2,4}|\d{1,2}\s*°?\s*(?:" + "|".join(MONTHS) +
+           r"|january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec)\.?,?\s+\d{4}")
 FIELD_LABELS = {
     "cliente": "Cliente", "numero_offerta": "Numero offerta", "data_offerta": "Data offerta",
     "oggetto": "Oggetto", "perimetro": "Perimetro", "prezzi": "Prezzi", "durata": "Durata",
@@ -35,9 +37,11 @@ def parse_date(text: str | None) -> date | None:
             if y < 100:
                 y += 2000
             return date(y, mo, d)
-        m = re.fullmatch(r"(\d{1,2})\s*°?\s*([a-zà-ù]+)\s+(\d{4})", t)
-        if m and m.group(2) in MONTHS:
-            return date(int(m.group(3)), MONTHS[m.group(2)], int(m.group(1)))
+        m = re.fullmatch(r"(\d{1,2})\s*°?\s*([a-zà-ù]+)\.?,?\s+(\d{4})", t)
+        if m:
+            mon = MONTHS.get(m.group(2)) or EN_MONTHS.get(m.group(2)[:3])
+            if mon:
+                return date(int(m.group(3)), mon, int(m.group(1)))
     except ValueError:
         return None
     return None
@@ -110,7 +114,7 @@ def _distinct(occs: list[Occ], keyf=lambda o: norm(o.value)) -> list[str]:
 
 def extract_fields(view: DocView, profile: Profile, has_prices: bool = False,
                    months_override: int | None = None) -> dict[str, FieldResult]:
-    items = list(view.scan())
+    items = list(view.scan()) + list(view.scan_extra())
     F = {k: FieldResult(k, lab, required=k in profile.required_fields) for k, lab in FIELD_LABELS.items()}
 
     def label_value(pattern: str, key: str, nextline: bool = True, transform=_clean):

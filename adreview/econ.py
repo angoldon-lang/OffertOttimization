@@ -5,7 +5,10 @@ import re
 from dataclasses import dataclass, field
 from decimal import Decimal
 
+from datetime import timedelta
+
 from .docx_utils import Change, DocView, Location, TInfo, norm
+from .extract import DATE_RE, find_dates
 from .money import D, find_numbers, fmt_num, parse_number, parse_percent, quantize
 
 PERIODS = {"una_tantum": "Una tantum", "mensile": "Mensile", "trimestrale": "Trimestrale",
@@ -120,6 +123,7 @@ class EconLine:
     col_unit: int | None = None
     col_disc: int | None = None
     cell_text: dict = field(default_factory=dict)
+    period: tuple | None = None
     calc: Decimal | None = None
     formula: str = ""
     diff: Decimal | None = None
@@ -182,6 +186,9 @@ class Econ:
     declared_net: Decimal | None = None
     vat_rate: Decimal | None = None
     vat_source: Location | None = None
+    periods: list = field(default_factory=list)          # (inizio, fine, Location) da righe «dd mmm yyyy - dd mmm yyyy»
+    period_totals: list = field(default_factory=list)    # (inizio, fine, importo)
+    span_months: int | None = None                       # durata ricavata dai periodi in tabella
 
     def base_lines(self):
         return [l for l in self.lines if l.kind == "base"]
@@ -241,9 +248,10 @@ def extract_and_calc(view: DocView, months: int | None, confirmations: dict | No
                 break
         if header_idx is None:
             continue
-        by_role = {v: k for k, v in roles.items()}
+        by_role = {v: t.rows[header_idx][k].grid for k, v in roles.items()}   # ruolo -> colonna di griglia
         hdr_texts = {v: t.rows[header_idx][k].text for k, v in roles.items()}
         hdr_hint = {role: detect_periodicity(txt) for role, txt in hdr_texts.items()}
+        cur_period = None
         window: list[EconLine] = []
         subtotals: list[Decimal] = []
         discounts = Decimal(0)
@@ -257,8 +265,15 @@ def extract_and_calc(view: DocView, months: int | None, confirmations: dict | No
                 continue
 
             def cell(role):
-                i = by_role.get(role)
-                return (cells[i] if i is not None and i < len(cells) else None)
+                g = by_role.get(role)
+                return next((c for c in cells if c.grid == g), None) if g is not None else None
+
+            joined = " ".join(x for x in texts if x)
+            ds = find_dates(joined)
+            if len(ds) == 2 and all(d for _, d in ds) and re.fullmatch(r"\s*(?:dal\s+)?(?:" + DATE_RE + r")\s*(?:-|–|—|al|to)\s*(?:" + DATE_RE + r")\s*", joined, re.I):
+                cur_period = (ds[0][1], ds[1][1])
+                e.periods.append((ds[0][1], ds[1][1], Location(t.section, table=t.idx, row=r, kind="cell")))
+                continue
 
             desc_c = cell("desc")
             label = (desc_c.text if desc_c and desc_c.text else next((x for x in texts if x), ""))
@@ -310,8 +325,11 @@ def extract_and_calc(view: DocView, months: int | None, confirmations: dict | No
             ln.kind = conf.get(ln.id, {}).get("kind") or detect_kind(" ".join(texts))
             pcell = per_c.text if per_c else ""
             p = conf.get(ln.id, {}).get("periodicita")
+            ln.period = cur_period
             if p:
                 ln.periodicity, ln.period_src = p, "confermata"
+            elif not detect_periodicity(pcell) and cur_period:
+                ln.periodicity, ln.period_src = "contratto", "documento"     # importo riferito al periodo indicato nella riga di intestazione
             else:
                 for src in (pcell, ln.desc, hdr_hint.get("unit") and hdr_texts.get("unit"), hdr_hint.get("amount") and hdr_texts.get("amount")):
                     pp = detect_periodicity(src) if src else None
@@ -347,8 +365,21 @@ def extract_and_calc(view: DocView, months: int | None, confirmations: dict | No
             if ln.kind == "base":
                 window.append(ln)
             e.lines.append(ln)
+    if e.periods:
+        e.span_months = _span_months(min(p[0] for p in e.periods), max(p[1] for p in e.periods))
+        tot: dict = {}
+        for l in e.lines:
+            if l.kind == "base" and l.period and l.amount is not None:
+                tot[l.period] = tot.get(l.period, Decimal(0)) + l.amount
+        e.period_totals = sorted((a, b, v) for (a, b), v in tot.items())
     _aggregates(e)
     return e
+
+
+def _span_months(start, end) -> int | None:
+    end = end + timedelta(days=1)
+    m = (end.year - start.year) * 12 + end.month - start.month + (1 if end.day > start.day + 3 else 0) - (1 if end.day < start.day - 3 else 0)
+    return m if m > 0 else None
 
 
 def _sum(ls, f):
@@ -360,7 +391,7 @@ def _aggregates(e: Econ) -> None:
     base = e.base_lines()
     e.once = sum((l.amount or Decimal(0) for l in base if l.periodicity == "una_tantum"), Decimal(0))
     amb = [l for l in base if l.periodicity is None]
-    rec = [l for l in base if l.periodicity not in (None, "una_tantum")]
+    rec = [l for l in base if l.periodicity not in (None, "una_tantum", "contratto")]
     e.annual = None if (amb or any(_line_annual(l, e.years) is None for l in rec)) else \
         sum((_line_annual(l, e.years) for l in rec), Decimal(0))
     e.contract = None if (amb or any(_line_contract(l, e.years) is None for l in base)) else \

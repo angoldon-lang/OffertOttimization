@@ -11,7 +11,7 @@ from openpyxl import load_workbook
 from adreview.margin import Alloc
 from adreview.money import quantize
 
-from conftest import demo, docx_text
+from conftest import DEMO as DEMO_PATH, demo, docx_text
 
 
 # ---------------------------------------------------------------- 1. offerta triennale
@@ -237,3 +237,68 @@ def test_docx_esportato_si_apre_e_conserva_oggetti(service, mk, tmp_path):
             p.write_bytes(s.analysis.client_docx)
             r = subprocess.run(["soffice", "--headless", "--convert-to", "pdf", "--outdir", str(tmp_path), str(p)], capture_output=True, timeout=120)
             assert (tmp_path / (name[:-5] + ".pdf")).exists()
+
+
+# ---------------------------------------------------------------- modalità revisione (modifiche tracciate)
+def _paras_after(data, mode):
+    """mode accept: applica le revisioni; reject: le scarta. Ritorna i testi dei paragrafi del corpo."""
+    import re, zipfile
+    from lxml import etree
+    z = zipfile.ZipFile(io.BytesIO(data))
+    root = etree.fromstring(z.read("word/document.xml"))
+    W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    drop, keep = (W + "del", W + "ins") if mode == "accept" else (W + "ins", W + "del")
+    for el in list(root.iter(drop)):
+        el.getparent().remove(el)
+    out = []
+    for p in root.iter(W + "p"):
+        out.append("".join(t.text or "" for t in p.iter(W + "t", W + "delText")))
+    return out
+
+
+def test_modalita_revisione_modifiche_tracciate_e_commenti(service, mk, tmp_path):
+    s = mk("offerta_totale_errato.docx")
+    data = service.export_tracked(s)
+    doc = Document(io.BytesIO(data))
+    x = docx_text(data)
+    assert "<w:ins" in __import__("zipfile").ZipFile(io.BytesIO(data)).read("word/document.xml").decode()
+    assert "<w:del " in __import__("zipfile").ZipFile(io.BytesIO(data)).read("word/document.xml").decode()
+    assert "<w:trackRevisions" in __import__("zipfile").ZipFile(io.BytesIO(data)).read("word/settings.xml").decode()
+    assert len(list(doc.comments)) >= 2 and all(c.author == "AD Review" for c in doc.comments)
+    # accetta tutto: importi corretti; rifiuta tutto: testo identico all'originale
+    acc = "\n".join(_paras_after(data, "accept"))
+    assert "2.700,00" in acc and "2.800,00" not in acc
+    orig = "\n".join(p.text for p in Document(io.BytesIO(demo("offerta_totale_errato.docx"))).paragraphs)
+    rej = "\n".join(_paras_after(data, "reject"))
+    assert "2.800,00" in rej and "2.700,00" not in rej
+    for line in orig.splitlines():
+        if line.strip():
+            assert line.strip() in rej, line
+    # il DOCX cliente pulito resta con i valori originali finché non si approva
+    assert "2.800,00" in docx_text(service.export_client_docx(s))
+    if shutil.which("soffice"):
+        p = tmp_path / "rev.docx"; p.write_bytes(data)
+        subprocess.run(["soffice", "--headless", "--convert-to", "pdf", "--outdir", str(tmp_path), str(p)], capture_output=True, timeout=120)
+        assert (tmp_path / "rev.pdf").exists()
+
+
+def test_modalita_revisione_senza_dati_riservati_e_rispetta_approvazioni(service, mk):
+    s = mk("offerta_totale_errato.docx", quotes=["quotazione_fornitore_triennale.xlsx"])
+    f = [f for f in s.analysis.findings if f.title.startswith("Totale errato")][0]
+    service.approve(s, f.change.key)            # approvata: testo normale, non tracciata
+    data = service.export_tracked(s)
+    t = docx_text(data)
+    for forbidden in ("margine", "Margine", "600,00", "costo fornitore", "Quotazione fornitore", "DEMO S.r.l."):
+        assert forbidden not in t, forbidden
+    acc = "\n".join(_paras_after(data, "accept"))
+    assert "2.800,00" not in acc                 # anche il richiamo nel testo è proposto come revisione
+
+
+def test_revisione_via_web(service):
+    from fastapi.testclient import TestClient
+    from adreview.app import create_app
+    c = TestClient(create_app(service.settings, service))
+    r = c.post("/review", files=[("offer", ("o.docx", (DEMO_PATH / "offerta_template_dati_mancanti.docx").open("rb")))], data={"profile": "demo"}, follow_redirects=False)
+    sid = r.headers["location"].split("/")[2]
+    d = c.get(f"/review/{sid}/download/revisione.docx")
+    assert d.status_code == 200 and len(list(Document(io.BytesIO(d.content)).comments)) >= 3

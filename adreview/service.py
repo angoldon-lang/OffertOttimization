@@ -15,7 +15,7 @@ from .checks import check_econ, check_fields, offer_expiry
 from .config import Profile, Settings
 from .docx_utils import Change, DocView, Location, apply_changes, norm, open_docx, save_docx
 from .econ import Econ, change_for_cell, extract_and_calc
-from .extract import FieldResult, extract_fields, fmt_date
+from .extract import FieldResult, Occ, extract_fields, fmt_date
 from .findings import CONTROLS, SEVERITY, Finding, worst
 from .formatter import apply_format, verify_docx
 from .margin import Alloc, MarginResult, SaleRow, check_quote_validity, compute_margin, sales_from_econ, suggest_allocs
@@ -24,6 +24,7 @@ from .money import D, fmt_eur, parse_number, quantize
 from .report import build_report_docx
 from .suppliers import CostLine, QuoteResult, parse_quotation
 from .summary import build_summary
+from .tracked import add_review_comments, apply_changes_tracked, enable_track_revisions
 from .template import Standard, build_standard, compare_template
 from .textcheck import check_consistency, check_placeholders, check_typos
 
@@ -176,7 +177,18 @@ class Service:
         f0 = extract_fields(view, profile)
         months = s.confirm.get("mesi") or f0["durata"].data.get("months")
         econ = extract_and_calc(view, months, s.confirm, decimals, rounding)
+        derived = False
+        if months is None and econ.span_months:
+            months, derived = econ.span_months, True
+            econ = extract_and_calc(view, months, s.confirm, decimals, rounding)
         fields = extract_fields(view, profile, has_prices=bool(econ.lines), months_override=s.confirm.get("mesi"))
+        if derived and not fields["durata"].present:
+            d = fields["durata"]
+            d.data["months"], d.data["derived"] = months, True
+            d.value = f"{months} mesi (ricavata dai periodi in tabella)"
+            d.status = "Da verificare"
+            d.note = "Durata non dichiarata nel testo: dedotta dai periodi indicati nella tabella economica; confermarla."
+            d.occurrences = [Occ(d.value, econ.periods[0][2], "periodi in tabella")]
         findings: list[Finding] = []
         if view.has_tracked_changes:
             findings.append(Finding("impaginazione", "Revisioni tracciate presenti nel documento", "Non verificabile", Location(kind="doc"),
@@ -471,6 +483,23 @@ class Service:
     # ------------------------------------------------------------ export
     def export_client_docx(self, s: Session) -> bytes:
         return s.analysis.client_docx
+
+    def export_tracked(self, s: Session) -> bytes:
+        """DOCX in modalità revisione: modifiche proposte come revisioni tracciate + rilievi come commenti.
+        Le modifiche già approvate sono applicate come testo normale; costi e margini non sono mai inclusi."""
+        a = s.analysis
+        doc = open_docx(s.offer_bytes)
+        apply_changes(doc, s.approved)
+        pending = [ch for key, ch in a.changes.items() if s.change_state.get(key) not in ("approved", "rejected", "failed")]
+        tracked = apply_changes_tracked(doc, pending)
+        stats = add_review_comments(doc, a.findings, tracked)
+        apply_format(doc, a.std, DocView(doc), a.fields)
+        enable_track_revisions(doc)
+        data = save_docx(doc)
+        leak = self._leak_check(s, data)[0]
+        if leak.status == "Errore":
+            raise RuntimeError("Il DOCX in revisione conterrebbe dati interni: " + leak.evidence)
+        return data
 
     def export_report(self, s: Session) -> bytes:
         return build_report_docx(s, s.analysis, self.profiles[s.profile_id])

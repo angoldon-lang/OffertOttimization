@@ -117,6 +117,10 @@ def check_placeholders(view: DocView, extra_texts: list[tuple[str, str]] | None 
     for loc, text in view.scan():
         for pat, what in PLACEHOLDER_PATTERNS:
             for m in re.finditer(pat, text):
+                if pat in (r"_{4,}", r"\.{6,}"):    # righe di firma/data: normali nelle condizioni di vendita, da verificare ma non errori
+                    out.append(Finding("segnaposto", "Campo vuoto da compilare (firma/data?)", "Da verificare", loc,
+                                       f"«{m.group(0)[:30]}» – {what}", "Se non è un campo di firma per il cliente, compilarlo", kind="sostanziale"))
+                    continue
                 out.append(Finding("segnaposto", "Segnaposto rimasto", "Errore", loc, f"«{m.group(0)}» – {what}",
                                    "Compilare o rimuovere (nessuna modifica automatica: il contenuto va deciso dall'utente)", kind="sostanziale"))
     for where, text in (extra_texts or []):

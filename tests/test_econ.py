@@ -85,3 +85,32 @@ def test_rounding_configurabile():
     assert extract_and_calc(v, 12, decimals=2, rounding="half_up").lines[0].calc == D("1.01")
     assert extract_and_calc(v, 12, decimals=2, rounding="down").lines[0].calc == D("1.00")
     assert extract_and_calc(v, 12, decimals=3, rounding="half_up").lines[0].calc == D("1.005")
+
+
+def test_periodi_con_date_in_inglese_righe_unite_e_durata_dedotta():
+    """Offerta tipo subscription: righe-intestazione «31 Dec 2026 - 30 Dec 2027» (cella unita) e totale offerta."""
+    d = Document()
+    t = d.add_table(rows=7, cols=5)
+    hdr = ["Part number", "Descrizione", "Q.tà", "Prezzo unitario", "Importo"]
+    for j, v in enumerate(hdr):
+        t.cell(0, j).text = v
+    def period(i, txt):
+        c = t.cell(i, 0).merge(t.cell(i, 4)); c.text = txt
+    period(1, "31 Dec 2026 - 30 Dec 2027")
+    for j, v in enumerate(["2078005", "SolarWinds NPM SLX", "1", "28.692,00", "28.692,00"]):
+        t.cell(2, j).text = v
+    period(3, "31 Dec 2027 - 30 Dec 2028")
+    for j, v in enumerate(["2078005", "SolarWinds NPM SLX", "1", "28.692,00", "28.692,00"]):
+        t.cell(4, j).text = v
+    for j, v in enumerate(["", "", "", "", ""]):
+        pass
+    t.cell(5, 1).text = ""
+    for j, v in enumerate(["", "Totale Offerta", "", "", "57.384,00"]):
+        t.cell(6, j).text = v
+    buf = io.BytesIO(); d.save(buf)
+    e = extract_and_calc(DocView(open_docx(buf.getvalue())), None)
+    assert len(e.lines) == 2 and all(l.periodicity == "contratto" and l.qty == 1 for l in e.lines)
+    assert e.span_months == 24
+    assert [x[2] for x in e.period_totals] == [D("28692.00"), D("28692.00")]
+    tot = [x for x in e.totals if x.label == "Totale Offerta"][0]
+    assert tot.status == "Conforme" and tot.calc == D("57384.00"), (tot.status, tot.calc, tot.note)

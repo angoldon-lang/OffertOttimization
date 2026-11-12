@@ -7,7 +7,7 @@ Applicazione web per il team commerciale. Si carica un'offerta Word e si ottiene
 3. un **riepilogo commerciale** interno con il riferimento al punto dell'offerta da cui proviene ogni dato;
 4. se si allega una quotazione fornitore (XLSX/PDF) o si inseriscono costi interni, un **report riservato di marginalità** (XLSX con formule).
 
-Tre download: **DOCX cliente**, **report interno dei controlli** (DOCX, riservato), **XLSX di marginalità** (riservato, se disponibile).
+Quattro download: **DOCX in modalità revisione** (correzioni proposte come modifiche tracciate di Word + rilievi come commenti «AD Review», si accetta/rifiuta direttamente in Word), **DOCX cliente pulito**, **report interno dei controlli** (DOCX, riservato), **XLSX di marginalità** (riservato, se disponibile).
 Costi, margini e quotazioni non vengono mai scritti nel DOCX cliente (c'è anche un controllo automatico anti-perdite).
 
 > I documenti e i valori in `demo/` e `profiles/ad_consulting_demo.json` (palette, font, logo, margini, soglie) sono **fittizi**: sostituire con i parametri ufficiali.
@@ -58,12 +58,17 @@ docker compose up -d --build        # http://127.0.0.1:18080
 
 I controlli sono indipendenti: senza quotazione fornitore restano disponibili revisione Word, calcoli e riepilogo.
 
+## Modalità revisione in Word
+
+Dalla scheda *Esporta* si scarica il DOCX con ogni correzione proposta (refusi, importi, denominazioni…) come **revisione tracciata** (`w:ins`/`w:del`, modifica minima alla parola) e ogni rilievo come **commento** ancorato al punto giusto; i rilievi generali (sezioni mancanti, dati non indicati) sono raccolti in un commento sul primo paragrafo. L'impaginazione è già applicata direttamente (non tracciata) e il tracciamento è attivo per le tue ulteriori modifiche. Le correzioni già approvate nell'app sono testo normale; quelle rifiutate non compaiono. Costi e margini non vengono mai inclusi. Prima di inviare al cliente: accetta/rifiuta tutte le revisioni ed elimina i commenti.
+
 ## Regole di calcolo
 
 - Aritmetica `Decimal`; arrotondamento configurabile (`AD_ROUNDING`, `AD_DECIMALS`); formati italiani (`1.234,56`, `10%`).
 - Riga = quantità × prezzo unitario × (1 − sconto%). Totali: *generico* (somma righe/subtotali − sconti), *annuo* (canoni annualizzati), *contratto* (una tantum + canoni × durata), IVA (aliquota × netto ricalcolato), lordo (netto + IVA, solo se la riga IVA è presente). Le opzioni sono escluse dai totali.
 - Margine € = ricavo netto − costo diretto; margine % = margine € ÷ ricavo netto × 100; per i totali margine complessivo ÷ ricavo complessivo; ricavo 0 → «n.a.». Due basi distinte: *solo costi fornitore* e *con costi interni* (se valorizzati).
 - Un costo mancante, non abbinato, con cambio/IVA/periodicità/durata/quantità da confermare lascia il margine **parziale**; il report dice quali voci comprende.
+- Tabelle a periodi (righe-intestazione tipo «31 Dec 2026 - 30 Dec 2027», anche con celle unite): le righe sotto ciascun periodo valgono per quel periodo; la durata, se non dichiarata, è dedotta dai periodi e segnata «da verificare».
 - Scadenza dell'offerta calcolata solo se data di partenza e criterio sono chiari («30 giorni dalla data dell'offerta»).
 
 ## Configurazione e AI

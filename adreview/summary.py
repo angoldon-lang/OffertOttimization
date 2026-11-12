@@ -56,6 +56,9 @@ def build_summary(fields: dict, econ: Econ, margin, margin_base: str, quote_vali
     if py:
         for r in py:
             V.append(SumRow(f"Anno {r['anno']}", fmt_eur(r["importo"]), "canoni annuali" + (" + una tantum" if r["anno"] == 1 and econ.once else ""), "Conforme"))
+    elif econ.period_totals:
+        for a_, b_, v_ in econ.period_totals:
+            V.append(SumRow(f"Periodo {fmt_date(a_)} – {fmt_date(b_)}", fmt_eur(v_), "righe sotto l'intestazione del periodo", "Conforme"))
     elif econ.lines:
         V.append(SumRow("Dettaglio per anno", "Non ricostruibile", "—", "Non verificabile", "Durata non intera o periodicità da confermare"))
     V.append(SumRow("Una tantum", fmt_eur(econ.once), ", ".join(l.source for l in econ.base_lines() if l.periodicity == "una_tantum") or "—", "Conforme" if not econ.ambiguous else "Da verificare"))

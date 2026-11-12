@@ -2,8 +2,11 @@
 {% block content %}
 <h2>Esporta</h2>
 <div class="cards">
-  <div class="card"><h3>DOCX cliente revisionato</h3><p>Copia impaginata secondo template/profilo. Contiene solo i contenuti dell'offerta originale più le modifiche che hai approvato. <b>Nessun costo, margine o dato di quotazione fornitore.</b></p>
-    <a class="btn primary" href="/review/{{ s.id }}/download/cliente.docx">Scarica DOCX cliente</a>
+  <div class="card"><h3>DOCX in modalità revisione (consigliato)</h3><p>Lo stesso documento con le correzioni proposte come <b>modifiche tracciate</b> di Word e i rilievi come <b>commenti</b> (autore «AD Review»): accetta o rifiuta direttamente in Word. Impaginazione già applicata. Nessun costo o margine.</p>
+    <a class="btn primary" href="/review/{{ s.id }}/download/revisione.docx">Scarica DOCX in revisione</a>
+    <p class="muted">Dopo aver accettato/rifiutato in Word, il file è pronto da inviare (verifica che non restino revisioni o commenti).</p></div>
+  <div class="card"><h3>DOCX cliente pulito</h3><p>Copia impaginata secondo template/profilo. Contiene solo i contenuti dell'offerta originale più le modifiche che hai approvato. <b>Nessun costo, margine o dato di quotazione fornitore.</b></p>
+    <a class="btn" href="/review/{{ s.id }}/download/cliente.docx">Scarica DOCX cliente</a>
     <p class="muted">Verifica automatica: {% if a.verify_problems %}<span class="badge err">{{ a.verify_problems|join('; ') }}</span>{% else %}il file si riapre e conserva tabelle, immagini, link, sezioni e testo{% endif %}.</p></div>
   <div class="card priv"><h3>Report interno (RISERVATO)</h3><p>Riepilogo commerciale, esito dei controlli, anomalie aperte, calcoli e (se disponibile) margine.</p>
     <a class="btn" href="/review/{{ s.id }}/download/report.docx">Scarica report interno</a></div>

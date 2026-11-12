@@ -43,6 +43,10 @@ class Location:
 
     @property
     def label(self) -> str:
+        if self.kind == "box":
+            return "Casella di testo / controllo di contenuto"
+        if self.kind == "header":
+            return "Intestazione / piè di pagina"
         parts = []
         if self.section:
             parts.append(f"Sezione «{self.section}»")
@@ -90,6 +94,7 @@ class CInfo:
     row: int
     col: int          # indice della cella nella riga (w:tc)
     grid: int         # colonna di griglia di partenza
+    span: int = 1
 
 
 @dataclass
@@ -192,7 +197,7 @@ class DocView:
                         cell = _Cell(tc, tbl)
                         txt = "\n".join(pp.text for pp in cell.paragraphs).strip()
                         span = tc.grid_span if hasattr(tc, "grid_span") else 1
-                        cells.append(CInfo(tc, txt, r, c, grid))
+                        cells.append(CInfo(tc, txt, r, c, grid, span or 1))
                         grid += span or 1
                     rows.append(cells)
                 nested = len(child.xpath("./w:tr/w:tc/w:tbl"))
@@ -218,6 +223,28 @@ class DocView:
                         for c in cells:
                             if c.text:
                                 yield Location(it.section, table=it.idx, row=r, col=c.col, kind="cell"), c.text.replace("\n", " ")
+
+    def scan_extra(self) -> Iterator[tuple[Location, str]]:
+        """Testo in punti che il resto dell'analisi non modifica: caselle di testo, controlli di contenuto (SDT),
+        intestazioni e piè di pagina. Solo lettura (usato per riconoscere campi come cliente/numero/data)."""
+        seen = set()
+        xp = ('.//w:txbxContent//w:p[not(ancestor::*[local-name()="Fallback"])] | ./w:sdt//w:p')
+        for pel in self.doc.element.body.xpath(xp):
+            if id(pel) in seen:
+                continue
+            seen.add(id(pel))
+            t = "".join(pel.xpath(".//w:t/text()")).strip()
+            if t:
+                yield Location(kind="box"), t
+        done = set()
+        for sec in self.doc.sections:
+            for part in (sec.header, sec.footer):
+                if part.is_linked_to_previous or id(part._element) in done:
+                    continue
+                done.add(id(part._element))
+                for pp in part.paragraphs:
+                    if pp.text.strip():
+                        yield Location(kind="header"), pp.text.strip()
 
     def full_text(self) -> str:
         return "\n".join(t for _, t in self.scan())
