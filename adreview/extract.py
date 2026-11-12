@@ -134,12 +134,16 @@ def extract_fields(view: DocView, profile: Profile, has_prices: bool = False,
     label_value(r"^\s*(?:spett\.?le|spettabile|cliente|destinatario|committente)\b\.?\s*[:\-–]?\s*(?P<v>.*)$", "cliente")
     label_value(r"^\s*oggetto\s*[:\-–]\s*(?P<v>.*)$", "oggetto")
 
+    if not F["oggetto"].occurrences:
+        label_value(r"^\s*(?:offerta|preventivo|proposta)\s+(?:commerciale\s+)?per\s+(?P<v>.+)$", "oggetto", nextline=False)
+
     # --- numero offerta
     tok = r"(?P<v>[A-Za-z0-9][A-Za-z0-9/_\-.]*)"
     n_pats = [
         r"\b(?:offerta|preventivo|proposta(?:\s+commerciale)?)\s*(?:n\.?|n°|nº|nr\.?|numero|num\.?|prot\.?|rif\.?)\s*[:\-]?\s*" + tok,
         r"\b(?:numero|n\.|n°|nr\.?|codice|riferimento|rif\.?)\s*(?:dell['’]\s*|di\s+)?(?:offerta|preventivo|proposta)\s*[:\-]?\s*" + tok,
         r"^\s*(?:offerta|preventivo|rif\.?\s*offerta)\s*:\s*" + tok,
+        r"^\s*rif(?:erimento)?\.?\s*[:\-]?\s*" + tok,
     ]
     for loc, text in items:
         for p in n_pats:
@@ -161,7 +165,7 @@ def extract_fields(view: DocView, profile: Profile, has_prices: bool = False,
             else:
                 unreadable_date = unreadable_date or Occ(m.group("v")[:30], loc, text)
             continue
-        m = re.match(r"^\s*[A-ZÀ-Ý][\w' ]{2,25},\s*(?P<v>" + DATE_RE + r")\s*$", text, re.I)
+        m = re.match(r"^\s*[A-ZÀ-Ý][\w' ]{2,25}\s*[,–—\-]\s*(?P<v>" + DATE_RE + r")\s*$", text, re.I)
         if m:
             F["data_offerta"].occurrences.append(Occ(m.group("v"), loc, text, {"date": parse_date(m.group("v"))}))
             continue
@@ -206,6 +210,7 @@ def extract_fields(view: DocView, profile: Profile, has_prices: bool = False,
     for loc, text in items:
         found = False
         for p in [r"durata[^.\n:]{0,40}?[:\-–]?\s*(?:di\s*)?(?P<n>\d{1,3}|" + WORD_RE + r")\s*(?P<u>mesi|mese|anni|anno)\b",
+                  r"validit[àa]\s+(?:del\s+)?contratto\s*[:\-–]?\s*(?P<n>\d{1,3}|" + WORD_RE + r")\s*(?P<u>mesi|anni|anno)\b",
                   r"\b(?:contratto|fornitura|servizio|abbonamento|canone)\s+(?:di\s+durata\s+|della\s+durata\s+di\s+|di\s+)(?P<n>\d{1,3}|" + WORD_RE + r")\s*(?P<u>mesi|anni)\b"]:
             for m in re.finditer(p, text, re.I):
                 n = _num(m.group("n"))
@@ -246,7 +251,9 @@ def extract_fields(view: DocView, profile: Profile, has_prices: bool = False,
                     t = "assente"
                 elif re.search(r"tacit|automatic", sl):
                     t = "automatico"
-                elif re.search(r"espress|previo\s+accordo|su\s+richiesta|per\s+iscritto|da\s+concordare|previa\s+accettazione", sl):
+                elif re.search(r"da\s+(?:concordare|definire|valutare|stabilire)|\bTBD\b", sl):
+                    t = "da_definire"
+                elif re.search(r"espress|previo\s+accordo|su\s+richiesta|per\s+iscritto|previa\s+accettazione", sl):
                     t = "espresso"
                 else:
                     t = None
@@ -274,16 +281,17 @@ def extract_fields(view: DocView, profile: Profile, has_prices: bool = False,
                                        {"days": int(m.group("n")) if m.group("u") in ("giorni", "gg", "giorno") else None,
                                         "months": int(m.group("n")) if m.group("u") == "mesi" else None, "clear": clear}))
             continue
-        m = re.search(r"(?:valid[ao]?\s*(?:fino\s+al|entro\s+il|sino\s+al)|validit[àa][^.\n]{0,50}?[:\-])\s*(?P<d>" + DATE_RE + ")", text, re.I)
+        m = re.search(r"valid\w*[^.\n]{0,40}?(?:fino\s+al|entro\s+il|sino\s+al)\s*:?\s*(?P<d>" + DATE_RE + ")", text, re.I) or \
+            re.search(r"validit[àa][^.\n]{0,50}?[:]\s*(?P<d>" + DATE_RE + ")", text, re.I)
         if m:
             d = parse_date(m.group("d"))
-            val.occurrences.append(Occ(m.group("d"), loc, text, {"date": d, "clear": True}))
+            val.occurrences.append(Occ(m.group("d"), loc, text, {"date": d, "clear": True, "raw": m.group("d")}))
 
     # --- pagamento
     pay = F["pagamento"]
     for loc, text in items:
         for s in _sentences(text):
-            if re.search(r"pagament|bonifico|d\.?\s?f\.?\s?f\.?\s?m|giorni\s+data\s+fattura|\bgg\.?\s*d\.?f", s, re.I) and not re.match(r"^\s*condizioni\s+di\s+pagamento\s*$", s, re.I):
+            if re.search(r"pagament|bonifico|d\.?\s?f\.?\s?f\.?\s?m|giorni\s+data\s+fattura|\bgg\.?\s*d\.?f|\d\s*gg", s, re.I) and not re.match(r"^\s*(?:condizioni\s+di\s+pagamento|riepilogo\b.*)\s*$", s, re.I):
                 m = re.search(r"(\d{1,3})\s*(?:gg|giorni)\s*(d\.?\s?f\.?\s?f\.?\s?m\.?|d\.?\s?f\.?|data\s+fattura|fine\s+mese)?", s, re.I)
                 pay.occurrences.append(Occ(s[:160], loc, text, {"term": norm(m.group(0)) if m else None}))
 
@@ -340,13 +348,17 @@ def _finalize(F: dict[str, FieldResult], has_prices: bool) -> None:
             if len(ts) > 1:
                 fr.status = "Errore"
                 fr.note = "Indicazioni di rinnovo contrastanti: " + ", ".join(sorted(ts))
+            elif ts == {"da_definire"}:
+                fr.status = "Da verificare"
+                fr.note = ("Rinnovo «da concordare»: non sono definiti modalità (tacito/espresso), durata del rinnovo né termine di disdetta"
+                           + (f" (il contratto dura {fr.data.get('months') or ''} mesi)" if False else "") + ".")
             elif not ts:
                 fr.status = "Da verificare"
                 fr.note = "Si parla di rinnovo/disdetta ma la modalità (automatico/espresso/assente) non è chiara."
             else:
                 fr.status = "Conforme"
             if ts:
-                parts.append("Rinnovo " + (", ".join(sorted(ts))))
+                parts.append("Rinnovo " + (", ".join(t.replace("da_definire", "da concordare (non definito)") for t in sorted(ts))))
             if fr.data.get("renew_months"):
                 parts.append(f"durata rinnovo {fr.data['renew_months']} mesi")
             if fr.data.get("disdetta"):
@@ -354,14 +366,27 @@ def _finalize(F: dict[str, FieldResult], has_prices: bool) -> None:
             fr.value = "; ".join(parts) if parts else fr.occurrences[0].value
             continue
         if k == "validita":
-            fr.value = fr.occurrences[0].value
+            invalid = [o for o in fr.occurrences if "raw" in o.data and o.data.get("date") is None]
+            good = [o for o in fr.occurrences if not ("raw" in o.data and o.data.get("date") is None)]
+            fr.value = (good or fr.occurrences)[0].value
             fr.status = "Conforme"
-            vals = {(o.data.get("days"), o.data.get("months"), o.data.get("date")) for o in fr.occurrences}
+            vals = {(o.data.get("days"), o.data.get("months"), o.data.get("date")) for o in good}
+            notes = []
+            if invalid:
+                fr.status = "Errore"
+                notes.append("Data inesistente: " + ", ".join(f"{o.value} ({o.loc.label})" for o in invalid))
             if len(vals) > 1:
-                fr.status, fr.note = "Errore", "Validità discordante tra sezioni: " + " / ".join(o.value for o in fr.occurrences)
+                fr.status = "Errore"
+                notes.append("Validità discordante tra sezioni: " + " / ".join(o.value for o in good))
+            elif invalid and good:
+                notes.append(f"Altra indicazione di validità nel documento: {good[0].value}")
+            fr.note = ". ".join(notes)
+            if invalid:
+                fr.occurrences = good + invalid
             continue
         if k == "pagamento":
             terms = {o.data.get("term") for o in fr.occurrences if o.data.get("term")}
+            fr.occurrences = [o for o in fr.occurrences if o.data.get("term")] + [o for o in fr.occurrences if not o.data.get("term")]
             fr.value = fr.occurrences[0].value
             if len(terms) > 1:
                 fr.status, fr.note = "Errore", "Termini di pagamento discordanti: " + " / ".join(sorted(terms))

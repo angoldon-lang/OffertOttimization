@@ -49,6 +49,8 @@ ROLE_PATTERNS = [
     ("unit", r"prezzo unit|unitario|\bp u\b|listino|costo unit|canone unit|prezzo singolo|prezzo cad"),
     ("disc", r"sconto|\bsc\b"),
     ("period", r"periodic|frequenza|tipologia|cadenza|periodo|\btipo\b"),
+    ("gross", r"netto iva|iva incl|lordo|ivato|con iva|totale iva|\+ ?iva"),
+    ("net", r"\bnetto\b|prezzo netto|importo netto|scontato"),
     ("amount", r"importo|totale|netto|valore|corrispettivo|canone|prezzo"),
     ("desc", r"descrizion|\bvoce\b|articolo|prodotto|servizio|dettaglio|oggetto|\bpos\b"),
 ]
@@ -70,6 +72,10 @@ def header_roles(cells: list[str]) -> dict[int, str]:
                 roles[i] = role
                 used.add(role)
                 break
+    if "net" in used and "amount" not in used:          # tabella semplice con la sola colonna «Netto»
+        for i, r in roles.items():
+            if r == "net":
+                roles[i] = "amount"
     return roles
 
 
@@ -123,6 +129,13 @@ class EconLine:
     col_unit: int | None = None
     col_disc: int | None = None
     cell_text: dict = field(default_factory=dict)
+    net: Decimal | None = None          # colonna «Netto» (prezzo scontato, IVA esclusa)
+    gross: Decimal | None = None        # colonna «Netto + IVA»
+    col_net: int | None = None
+    col_gross: int | None = None
+    gross_calc: Decimal | None = None
+    gross_status: str = ""
+    gross_note: str = ""
     period: tuple | None = None
     calc: Decimal | None = None
     formula: str = ""
@@ -161,6 +174,8 @@ class TotalRow:
     note: str = ""
     cell_text: str = ""
     data_rate: Decimal | None = None
+    role: str = "amount"          # amount (Listino/Importo) | net | gross
+    header: str = ""
 
     @property
     def location(self) -> Location:
@@ -189,6 +204,12 @@ class Econ:
     periods: list = field(default_factory=list)          # (inizio, fine, Location) da righe «dd mmm yyyy - dd mmm yyyy»
     period_totals: list = field(default_factory=list)    # (inizio, fine, importo)
     span_months: int | None = None                       # durata ricavata dai periodi in tabella
+    period_rows: list = field(default_factory=list)      # dict(start, end, amount, net, gross)
+    list_total: Decimal | None = None
+    net_total: Decimal | None = None
+    gross_total: Decimal | None = None
+    inferred_vat: Decimal | None = None                  # aliquota dedotta da gross/net delle righe
+    has_net: bool = False
 
     def base_lines(self):
         return [l for l in self.lines if l.kind == "base"]
@@ -286,7 +307,28 @@ def extract_and_calc(view: DocView, months: int | None, confirmations: dict | No
                 if amt_c is None:
                     continue
                 rep = parse_number(find_numbers(amt_c.text)[0][0]) if find_numbers(amt_c.text) else None
-                tr = TotalRow(f"T{t.idx + 1}R{r + 1}", t.idx, r, t.section, label, ctype, amt_c.col, rep, cell_text=amt_c.text)
+                tr = TotalRow(f"T{t.idx + 1}R{r + 1}", t.idx, r, t.section, label, ctype, amt_c.col, rep, cell_text=amt_c.text,
+                              header=hdr_texts.get("amount", ""))
+                win_snapshot = list(window)
+                if ctype in ("generico", "subtotale", "contratto"):
+                    for role in ("net", "gross"):
+                        c2 = cell(role)
+                        if c2 is None or not find_numbers(c2.text):
+                            continue
+                        srcs = [l for l in (tlines if ctype == "contratto" else win_snapshot) if l.kind == "base"]
+                        vals = [getattr(l, role) for l in srcs]
+                        tr2 = TotalRow(f"T{t.idx + 1}R{r + 1}{role[0]}", t.idx, r, t.section, label, ctype, c2.col,
+                                       parse_number(find_numbers(c2.text)[0][0]), cell_text=c2.text, role=role, header=hdr_texts.get(role, ""))
+                        if not srcs or any(v is None for v in vals):
+                            tr2.status, tr2.note = "Non verificabile", "Righe senza valore in questa colonna."
+                        else:
+                            tr2.calc = q(sum(vals, Decimal(0)))
+                            tr2.formula = f"somma colonna «{tr2.header}»: " + " + ".join(fmt_num(v) for v in vals[:6]) + (" + …" if len(vals) > 6 else "") + f" = {fmt_num(tr2.calc)}"
+                            tr2.diff = q(tr2.reported - tr2.calc) if tr2.reported is not None else None
+                            tr2.status = "Conforme" if tr2.diff == 0 else "Errore"
+                            if role == "gross" and e.inferred_vat is not None:
+                                pass
+                        e.totals.append(tr2)
                 _calc_total(e, tr, tlines, window, subtotals, discounts, last_net, last_iva, q, label, cells, texts)
                 if ctype == "sconto":
                     discounts += tr.calc if tr.calc is not None else (tr.reported or Decimal(0))
@@ -314,14 +356,20 @@ def extract_and_calc(view: DocView, months: int | None, confirmations: dict | No
                 if disc is not None:
                     disc = abs(disc)
             rep = (parse_number(find_numbers(amt_c.text)[0][0]) if amt_c and find_numbers(amt_c.text) else None)
-            if qty is None and unit is None and rep is None:
+            net_c, gross_c = cell("net"), cell("gross")
+            net_v = parse_number(find_numbers(net_c.text)[0][0]) if net_c and find_numbers(net_c.text) else None
+            gross_v = parse_number(find_numbers(gross_c.text)[0][0]) if gross_c and find_numbers(gross_c.text) else None
+            if qty is None and unit is None and rep is None and net_v is None and gross_v is None:
                 continue
             ln = EconLine(f"T{t.idx + 1}R{r + 1}", t.idx, r, t.section, desc=(desc_c.text if desc_c else label),
                           sku=(sku_c.text if sku_c else ""), qty=qty, unit=unit, disc=disc, reported=rep,
                           col_amount=amt_c.col if amt_c else None, col_qty=qty_c.col if qty_c else None,
                           col_unit=unit_c.col if unit_c else None, col_disc=disc_c.col if disc_c else None,
                           cell_text={"amount": amt_c.text if amt_c else "", "qty": qty_c.text if qty_c else "",
-                                     "unit": unit_c.text if unit_c else "", "disc": disc_c.text if disc_c else ""})
+                                     "unit": unit_c.text if unit_c else "", "disc": disc_c.text if disc_c else "",
+                                     "net": net_c.text if net_c else "", "gross": gross_c.text if gross_c else ""})
+            ln.net, ln.gross = net_v, gross_v
+            ln.col_net, ln.col_gross = (net_c.col if net_c else None), (gross_c.col if gross_c else None)
             ln.kind = conf.get(ln.id, {}).get("kind") or detect_kind(" ".join(texts))
             pcell = per_c.text if per_c else ""
             p = conf.get(ln.id, {}).get("periodicita")
@@ -359,19 +407,41 @@ def extract_and_calc(view: DocView, months: int | None, confirmations: dict | No
                 ln.status = "Non verificabile"
                 ln.note = "Quantità o prezzo unitario mancanti: ricalcolo non possibile."
                 ln.formula = "importo riportato (non ricalcolabile)"
+            if ln.amount is None and (ln.net is not None or ln.gross is not None):
+                ln.reported = ln.reported if ln.reported is not None else (ln.net if ln.net is not None else ln.gross)
             if ln.periodicity is None and ln.kind == "base":
                 e.ambiguous.append(f"{ln.source} «{ln.desc[:40]}»: periodicità non determinabile")
             tlines.append(ln)
             if ln.kind == "base":
                 window.append(ln)
             e.lines.append(ln)
+    both = [l for l in e.lines if l.net and l.gross]
+    e.has_net = any(l.net is not None for l in e.lines)
+    if both:
+        from collections import Counter
+        cnt = Counter(quantize((l.gross / l.net - 1) * 100, 2) for l in both)
+        rate, n = cnt.most_common(1)[0]
+        if n >= max(1, int(len(both) * 0.6 + 0.99)):
+            e.inferred_vat = rate
+            for l in both:
+                l.gross_calc = q(l.net * (1 + rate / 100))
+                if l.gross_calc != l.gross:
+                    l.gross_status = "Errore"
+                    l.gross_note = f"Netto {fmt_num(l.net)} + IVA {fmt_num(rate, 0 if rate == rate.to_integral_value() else 2)}% = {fmt_num(l.gross_calc)}, riportato {fmt_num(l.gross)}"
+                else:
+                    l.gross_status = "Conforme"
     if e.periods:
         e.span_months = _span_months(min(p[0] for p in e.periods), max(p[1] for p in e.periods))
         tot: dict = {}
         for l in e.lines:
-            if l.kind == "base" and l.period and l.amount is not None:
-                tot[l.period] = tot.get(l.period, Decimal(0)) + l.amount
-        e.period_totals = sorted((a, b, v) for (a, b), v in tot.items())
+            if l.kind == "base" and l.period:
+                d = tot.setdefault(l.period, {"amount": Decimal(0), "net": Decimal(0), "gross": Decimal(0), "n": 0})
+                d["amount"] += l.amount or Decimal(0)
+                d["net"] += l.net or Decimal(0)
+                d["gross"] += l.gross or Decimal(0)
+                d["n"] += 1
+        e.period_rows = [dict(start=a, end=b, **v) for (a, b), v in sorted(tot.items())]
+        e.period_totals = [(r["start"], r["end"], r["amount"]) for r in e.period_rows]
     _aggregates(e)
     return e
 
@@ -397,6 +467,12 @@ def _aggregates(e: Econ) -> None:
     e.contract = None if (amb or any(_line_contract(l, e.years) is None for l in base)) else \
         sum((_line_contract(l, e.years) for l in base), Decimal(0))
     e.options = sum((l.amount or Decimal(0) for l in e.lines if l.kind == "opzione"), Decimal(0))
+    if not rec and any(l.periodicity == "contratto" for l in base):
+        e.annual = None
+    if base:
+        e.list_total = sum((l.amount for l in base if l.amount is not None), Decimal(0)) if all(l.amount is not None for l in base) else None
+        e.net_total = sum((l.net for l in base), Decimal(0)) if all(l.net is not None for l in base) else None
+        e.gross_total = sum((l.gross for l in base), Decimal(0)) if all(l.gross is not None for l in base) else None
     for t in e.totals:
         if t.ctype in ("contratto", "generico") and t.reported is not None:
             if t.ctype == "contratto" or e.declared_net is None:

@@ -27,6 +27,25 @@ def _src(loc: Location | None) -> str:
 def build_summary(fields: dict, econ: Econ, margin, margin_base: str, quote_validity: tuple[str, str] | None) -> dict[str, list[SumRow]]:
     S: dict[str, list[SumRow]] = {"Valori": [], "Durata": [], "Rinnovo": [], "Validità offerta": [], "Margine": []}
     V = S["Valori"]
+    if econ.has_net and econ.net_total is not None:
+        dec = {t.role: t for t in econ.totals if t.role in ("net", "gross", "amount") and t.ctype in ("generico", "contratto")}
+        n = dec.get("net")
+        V.append(SumRow("Totale offerto (netto IVA, ricalcolato)", fmt_eur(econ.net_total), _src(n.location) if n else "somma delle righe",
+                        ("Errore" if n and n.status == "Errore" else "Conforme"), f"Dichiarato in offerta: {fmt_eur(n.reported)}" if n and n.status == "Errore" else ""))
+        if econ.gross_total is not None:
+            vat = econ.gross_total - econ.net_total
+            g = dec.get("gross")
+            V.append(SumRow(f"IVA{' ' + fmt_num(econ.inferred_vat, 0) + '% (dedotta)' if econ.inferred_vat is not None else ''}", fmt_eur(vat), "differenza Netto + IVA − Netto",
+                            "Conforme" if econ.inferred_vat is not None else "Da verificare"))
+            V.append(SumRow("Totale lordo (IVA inclusa, ricalcolato)", fmt_eur(econ.gross_total), _src(g.location) if g else "somma delle righe",
+                            ("Errore" if g and g.status == "Errore" else "Conforme"), f"Dichiarato in offerta: {fmt_eur(g.reported)}" if g and g.status == "Errore" else ""))
+        if econ.list_total is not None:
+            V.append(SumRow("Totale a listino (informativo)", fmt_eur(econ.list_total), "colonna Listino Totale", "Conforme"))
+        for r_ in econ.period_rows:
+            V.append(SumRow(f"Periodo {fmt_date(r_['start'])} – {fmt_date(r_['end'])}", f"netto {fmt_eur(r_['net'])} · IVA inclusa {fmt_eur(r_['gross'])}", "righe sotto l'intestazione del periodo", "Conforme"))
+        V.append(SumRow("Una tantum", fmt_eur(econ.once), "—", "Conforme"))
+        V.append(SumRow("Opzioni (escluse dai totali)", fmt_eur(econ.options) if econ.options else "Nessuna", "—", "Conforme"))
+        return _rest(S, fields, margin, margin_base, quote_validity)
     tot = {t.ctype: t for t in econ.totals}
     contract_rows = [t for t in econ.totals if t.ctype == "contratto"] or [t for t in econ.totals if t.ctype == "generico"]
     net_t = contract_rows[-1] if contract_rows else None
@@ -67,6 +86,10 @@ def build_summary(fields: dict, econ: Econ, margin, margin_base: str, quote_vali
                     "Conforme" if econ.annual is not None else "Non verificabile"))
     V.append(SumRow("Opzioni (escluse dai totali)", fmt_eur(econ.options) if econ.options else "Nessuna",
                     ", ".join(l.source for l in econ.lines if l.kind == "opzione") or "—", "Conforme"))
+    return _rest(S, fields, margin, margin_base, quote_validity)
+
+
+def _rest(S, fields, margin, margin_base, quote_validity):
     # Durata
     d = fields["durata"]
     D_ = S["Durata"]
@@ -78,7 +101,7 @@ def build_summary(fields: dict, econ: Econ, margin, margin_base: str, quote_vali
     # Rinnovo
     r = fields["rinnovo"]
     ts = set(r.data.get("types", []))
-    S["Rinnovo"].append(SumRow("Rinnovo", ("Automatico" if "automatico" in ts else "Espresso" if "espresso" in ts else "Assente (dichiarato)" if "assente" in ts else r.value) if r.present else "Non indicato",
+    S["Rinnovo"].append(SumRow("Rinnovo", ("Automatico" if "automatico" in ts else "Espresso" if "espresso" in ts else "Assente (dichiarato)" if "assente" in ts else "Da concordare (non definito)" if "da_definire" in ts else r.value) if r.present else "Non indicato",
                                _src(r.loc), r.status if r.present else "Non indicato", r.note))
     S["Rinnovo"].append(SumRow("Durata del rinnovo", f"{r.data['renew_months']} mesi" if r.data.get("renew_months") else "Non indicata", _src(r.loc), "Conforme" if r.data.get("renew_months") else "Non indicato"))
     S["Rinnovo"].append(SumRow("Termine di disdetta", r.data.get("disdetta") or "Non indicato", _src(r.loc), "Conforme" if r.data.get("disdetta") else "Non indicato"))

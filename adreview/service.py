@@ -11,7 +11,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from . import llm
-from .checks import check_econ, check_fields, offer_expiry
+from .checks import check_discount_text, check_econ, check_fields, check_references, check_year_summary, offer_expiry
 from .config import Profile, Settings
 from .docx_utils import Change, DocView, Location, apply_changes, norm, open_docx, save_docx
 from .econ import Econ, change_for_cell, extract_and_calc
@@ -198,6 +198,7 @@ class Service:
                                     "Le tabelle dentro altre tabelle sono conservate ma non analizzate.", "Verificare manualmente"))
         findings += check_fields(fields, today)
         findings += check_econ(econ, months is not None, bool(view.tables))
+        findings += check_discount_text(view, econ) + check_year_summary(view, econ) + check_references(view)
 
         # 3) testo
         findings += check_typos(view, profile)

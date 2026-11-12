@@ -154,7 +154,8 @@ def heading_level(p: Paragraph, text: str, sname: str) -> int | None:
     if numbered and len(t) <= 70 and numbered.group(2)[0].isupper() and not re.search(r"\d[.,]\d", t):
         return numbered.group(1).count(".") + 1
     letters = re.sub(r"[^A-Za-zÀ-ÿ]", "", t)
-    if len(letters) >= 4 and t.isupper() and len(t) <= 60:
+    if (len(letters) >= 4 and t.isupper() and len(t) <= 60 and not re.search(r"\d|\bS\.?P\.?A\.?\b|\bS\.?R\.?L\.?\b|\bP\.?\s?IVA\b", t)
+            and getattr(p, "_after_heading", True)):
         return 1
     return None
 
@@ -177,6 +178,7 @@ class DocView:
                 p = Paragraph(child, doc._body)
                 text = p.text
                 sname = style_name(p)
+                p._after_heading = bool(self.headings)      # maiuscolo come titolo solo dopo un primo titolo vero (evita copertine)
                 lvl = heading_level(p, text, sname)
                 is_list = child.pPr is not None and child.pPr.numPr is not None
                 if lvl:

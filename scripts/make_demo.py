@@ -136,6 +136,63 @@ def build_offer(path: Path, *, wrong_total=False, messy=False, missing=False, tw
     doc.save(path)
 
 
+def build_subscription_offer(path: Path):
+    """Offerta tipo «subscription» triennale con tabella a periodi, colonne Listino/Netto/Netto+IVA e errori voluti
+    (totale netto sbagliato, sconto triennale calcolato sul totale errato, validità con data inesistente, rinnovo «da concordare»)."""
+    doc = Document()
+    doc.add_paragraph("Offerta per Fornitura Soluzione Alfa")
+    for t in ["Spett.le", "BANCA DEMO SPA", "P.IVA 00000000000", "Alla C.A. di Mario Rossi"]:
+        doc.add_paragraph(t)
+    for t in ["Modena – 19/07/2026", "Autore:Anna Verdi", "Rif:OFF_DEMO_26/0001_R01", "La presente offerta è valida fino al 31-10-2026"]:
+        p = doc.add_paragraph(t); p.alignment = 2
+    doc.add_heading("Allegati", 1)
+    doc.add_paragraph("Allegato A: Contratto.", style="List Bullet")
+    doc.add_paragraph("Perimetro: si veda il paragrafo Perimetro del servizio.", style="List Bullet")
+    doc.add_heading("Premessa", 1)
+    doc.add_paragraph("Il contenuto della presente offerta annulla e sostituisce ogni altra precedente intesa.")
+    doc.add_heading("Oggetto", 1)
+    doc.add_paragraph("Facendo seguito ai colloqui avvenuti, abbiamo il piacere di sottoporre la nostra offerta relativa a:")
+    doc.add_paragraph("Fornitura Soluzione Alfa")
+    doc.add_heading("Offerta Economica", 1)
+    items = [("1", "100001", "Alfa Monitor (Subscription)", "28.692,00"), ("1", "100002", "Modulo Beta per Alfa Monitor (Subscription)", "15.382,00"),
+             ("1", "100003", "Motore aggiuntivo Alfa (Subscription)", "17.961,00"), ("1", "100003", "Motore aggiuntivo Alfa (Subscription - New)", "17.961,00")]
+    nets = [[11000, 6000, 7000, 7500], [12100, 6800, 7800, 8800], [13800, 7800, 8800, 9800]]
+    periods = ["31 Dec 2026 - 30 Dec 2027", "31 Dec 2027 - 30 Dec 2028", "31 Dec 2028 - 30 Dec 2029"]
+    it = lambda v: f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    rows = 1 + 3 * 5 + 1
+    t = doc.add_table(rows=rows, cols=7)
+    t.style = "Table Grid"
+    for j, v in enumerate(["Q.tà", "Codice Prodotto", "Descrizione", "Listino Unitario", "Listino Totale", "Netto Totale", "Netto + Iva"]):
+        t.cell(0, j).text = v
+    r = 1
+    for pi, per in enumerate(periods):
+        c = t.cell(r, 0).merge(t.cell(r, 6)); c.text = per; r += 1
+        for k, (q, cod, desc, lst) in enumerate(items):
+            net = nets[pi][k]
+            vals = [q, cod, desc, f"€ {lst}", f"€ {lst}", f"€ {it(net)}", f"€ {it(round(net * 1.22, 2))}"]
+            for j, v in enumerate(vals):
+                t.cell(r, j).text = v
+            r += 1
+    for j, v in enumerate(["", "", "Totale Offerta", "", "€ 239.988,00", "€ 114.761,44", "€ 130.784,00"]):
+        t.cell(r, j).text = v
+    doc.add_paragraph()
+    doc.add_paragraph("Riepilogo pagamenti annuali con IVA")
+    t2 = doc.add_table(rows=4, cols=2)
+    t2.style = "Table Grid"
+    for i, (a, b) in enumerate([("Anno", "Totale (Netto)"), ("Totale 2026", "€ 38.430,00"), ("Totale 2027", "€ 43.310,00"), ("Totale 2028", "€ 49.044,00")]):
+        t2.cell(i, 0).text, t2.cell(i, 1).text = a, b
+    doc.add_heading("Condizioni di vendita", 1)
+    t3 = doc.add_table(rows=7, cols=2)
+    t3.style = "Table Grid"
+    for i, (a, b) in enumerate([("TIPOLOGIA E CONDIZIONI DI PAGAMENTO", "Bonifico Bancario 30gg Fine mese"), ("FATTURAZIONE", "Annuale Anticipato"),
+                                ("", "In caso di pagamento triennale anticipato ulteriore sconto del 3% per un importo complessivo di 135.808,64€"),
+                                ("VALIDITÀ CONTRATTO", "3 anni"), ("VALIDITÀ OFFERTA FINO AL 31-9-2026", ""),
+                                ("ESCLUSIONI", "Salvo quanto indicato in offerta sono esclusi i costi di lavori e materiali sulle linee elettriche"),
+                                ("RINNOVO", "Da concordare")]):
+        t3.cell(i, 0).text, t3.cell(i, 1).text = a, b
+    doc.save(path)
+
+
 def build_template(path: Path):
     doc = Document()
     s = doc.sections[0]
@@ -197,6 +254,7 @@ def main():
     build_offer(OUT / "offerta_template_dati_mancanti.docx", messy=True, missing=True)
     build_offer(OUT / "offerta_due_voci.docx", two_lines=True)
     build_template(OUT / "template_aziendale.docx")
+    build_subscription_offer(OUT / "offerta_subscription_periodi.docx")
     # quotazioni
     quote_xlsx(OUT / "quotazione_fornitore_triennale.xlsx",
                [["SW-XYZ-01", "Licenza Gestionale XYZ", 10, 60, 600, "Annuale"]])

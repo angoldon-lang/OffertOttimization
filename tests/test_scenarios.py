@@ -302,3 +302,42 @@ def test_revisione_via_web(service):
     sid = r.headers["location"].split("/")[2]
     d = c.get(f"/review/{sid}/download/revisione.docx")
     assert d.status_code == 200 and len(list(Document(io.BytesIO(d.content)).comments)) >= 3
+
+
+# ---------------------------------------------------------------- offerta «subscription» a periodi (caso reale anonimizzato)
+def test_6_subscription_totale_netto_sconto_validita_rinnovo(service, mk):
+    s = mk("offerta_subscription_periodi.docx")
+    a = s.analysis
+    F = a.fields
+    assert (F["cliente"].value, F["numero_offerta"].value, F["data_offerta"].value) == ("BANCA DEMO SPA", "OFF_DEMO_26/0001_R01", "19/07/2026")
+    assert F["oggetto"].value == "Fornitura Soluzione Alfa" and F["durata"].data["months"] == 36
+    assert "30gg" in F["pagamento"].value                              # non il titolo del riepilogo
+    # totale netto errato: 114.761,44 dichiarato, 107.200,00 somma delle righe
+    tot = [f for f in a.findings if f.title.startswith("Totale errato") and "Netto Totale" in f.title][0]
+    assert tot.status == "Errore" and "114.761,44" in tot.evidence and "107.200,00" in tot.evidence and "7.561,44" in tot.evidence
+    assert a.econ.net_total == D("107200.00") and a.econ.gross_total == D("130784.00") and a.econ.list_total == D("239988.00")
+    assert a.econ.inferred_vat == D("22.00")
+    # listino e lordo corretti
+    assert not [f for f in a.findings if f.title.startswith("Totale errato") and "Listino" in f.title or "Netto + Iva" in f.title and f.status == "Errore"]
+    # sconto triennale calcolato sul totale errato
+    sc = [f for f in a.findings if f.title.startswith("Importo dello sconto")][0]
+    assert "135.808,64" in sc.evidence and "126.860,48" in sc.evidence and sc.change.after == "126.860,48"
+    # riepilogo annuale: titolo «con IVA» ma intestazione «Netto»
+    y = [f for f in a.findings if f.title.startswith("Riepilogo annuale")][0]
+    assert y.status == "Errore" and y.change.after == "IVA inclusa"
+    # validità: data inesistente + discordanza; rinnovo non definito; riferimento a paragrafo inesistente
+    assert F["validita"].status == "Errore" and "31-9-2026" in F["validita"].note
+    assert F["rinnovo"].status == "Da verificare" and "da concordare" in F["rinnovo"].note.lower()
+    assert any(f.title.startswith("Riferimento a un paragrafo") and "Perimetro del servizio" in f.evidence for f in a.findings)
+    # la copertina in maiuscolo non diventa un titolo
+    doc = Document(io.BytesIO(a.client_docx))
+    assert [p.style.name for p in doc.paragraphs if p.text == "BANCA DEMO SPA"] != ["Heading 1"]
+    # riepilogo: valori ricalcolati
+    vals = {r.label: r for r in a.summary["Valori"]}
+    assert vals["Totale offerto (netto IVA, ricalcolato)"].value == "107.200,00 €" and vals["Totale offerto (netto IVA, ricalcolato)"].status == "Errore"
+    # approvazione correzione totale + sconto: Word aggiornato, ricalcolo senza altri errori sui totali
+    service.approve(s, tot.change.key)
+    service.approve(s, sc.change.key)
+    t = docx_text(s.analysis.client_docx)
+    assert "107.200,00" in t and "126.860,48" in t and "114.761,44" not in t and "135.808,64" not in t
+    assert not [f for f in s.analysis.findings if f.title.startswith(("Totale errato", "Importo dello sconto"))]
