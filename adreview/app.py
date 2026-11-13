@@ -23,8 +23,8 @@ from .money import fmt_eur, fmt_num, fmt_pct, parse_number, quantize
 from .service import Service
 
 BASE = Path(__file__).resolve().parent
-TABS = [("controlli", "Controlli"), ("calcoli", "Calcoli"), ("template", "Template e impaginazione"),
-        ("margine", "Margine (riservato)"), ("riepilogo", "Riepilogo"), ("export", "Esporta")]
+TABS = [("riepilogo", "Riepilogo e correzioni"), ("controlli", "Tutti i controlli"), ("calcoli", "Calcoli"), ("template", "Template e impaginazione"),
+        ("margine", "Margine (riservato)"), ("export", "Esporta")]
 COST_PERIODS = {"una_tantum": "Una tantum", "annuale": "Annuale", "mensile": "Mensile", "trimestrale": "Trimestrale",
                 "semestrale": "Semestrale", "periodo_quotazione": "Totale per il periodo della quotazione"}
 STATUS_CLASS = {"Conforme": "ok", "Da verificare": "warn", "Errore": "err", "Non verificabile": "unk", "Non applicabile": "na"}
@@ -54,6 +54,12 @@ def create_app(settings: Settings | None = None, service: Service | None = None)
     def _hl(ctx: str, frag: str, tag: str):
         ctx, frag = ctx or frag, frag
         i = ctx.find(frag)
+        if i >= 0 and len(ctx) > len(frag) + 140:          # mostra solo il contesto vicino alla modifica
+            a, b = max(0, i - 60), min(len(ctx), i + len(frag) + 60)
+            ctx = ("…" if a else "") + ctx[a:b] + ("…" if b < len(ctx) else "")
+            i = ctx.find(frag)
+        if not frag:
+            return Markup("<span class='muted'>(vuoto)</span>")
         if i < 0:
             return Markup(f"<{tag}>{{}}</{tag}>").format(ctx)
         return Markup(f"{{}}<{tag}>{{}}</{tag}>{{}}").format(ctx[:i], frag, ctx[i + len(frag):])
@@ -68,7 +74,7 @@ def create_app(settings: Settings | None = None, service: Service | None = None)
             raise HTTPException(404, "Sessione non trovata o scaduta")
         return s
 
-    def back(request: Request, sid: str, default: str = "controlli"):
+    def back(request: Request, sid: str, default: str = "riepilogo"):
         nxt = (request.query_params.get("next") or default)
         if not re.fullmatch(r"[a-z]+", nxt):
             nxt = default
@@ -117,11 +123,11 @@ def create_app(settings: Settings | None = None, service: Service | None = None)
         except Exception as exc:
             return render(request, "home.html", profiles=svc.profiles, settings=settings, ai_text=llm.disclosure(settings),
                           max_mb=settings.max_upload_mb, error=str(exc))
-        return RedirectResponse(f"/review/{s.id}/controlli", status_code=303)
+        return RedirectResponse(f"/review/{s.id}/riepilogo", status_code=303)
 
     @app.get("/review/{sid}")
     def review_root(sid: str):
-        return RedirectResponse(f"/review/{sid}/controlli", status_code=303)
+        return RedirectResponse(f"/review/{sid}/riepilogo", status_code=303)
 
     @app.get("/review/{sid}/{tab}", response_class=HTMLResponse)
     def review(request: Request, sid: str, tab: str):
@@ -134,7 +140,13 @@ def create_app(settings: Settings | None = None, service: Service | None = None)
         rows = [(i, f) for i, f in enumerate(a.findings)
                 if (not flt_status or f.status == flt_status) and (not flt_check or f.check == flt_check)
                 and not (tab == "controlli" and not flt_status and f.status == "Conforme" and q.get("tutti") != "1")]
-        return render(request, f"{tab}.html", s=s, a=a, tab=tab, rows=rows, flt_status=flt_status, flt_check=flt_check,
+        fixes = [(i, f) for i, f in enumerate(a.findings) if f.change and a.states[i] in ("Da approvare", "Da completare")]
+        rejected = [(i, f) for i, f in enumerate(a.findings) if f.change and a.states[i] == "Rifiutata"]
+        manual = [(i, f) for i, f in enumerate(a.findings) if not f.change and f.status in ("Errore", "Da verificare", "Non verificabile")
+                  and not f.auto_fixed and f.id not in s.acks and f.title not in ("Riga non ricalcolabile", "Periodicità/unità da confermare")
+                  and f.check not in ("margine",)]
+        return render(request, f"{tab}.html", fixes=fixes, ready=sorted([x for x in fixes if not x[1].change.needs_value], key=lambda x: x[1].change.category == "testo"),
+                      needs=[x for x in fixes if x[1].change.needs_value], manual=manual, rejected=rejected, s=s, a=a, tab=tab, rows=rows, flt_status=flt_status, flt_check=flt_check,
                       show_all=q.get("tutti") == "1", profile=svc.profiles[s.profile_id], settings=settings, ai_text=llm.disclosure(settings),
                       n_conformi=len([f for f in a.findings if f.status == "Conforme"]))
 
@@ -151,6 +163,23 @@ def create_app(settings: Settings | None = None, service: Service | None = None)
         else:
             raise HTTPException(400)
         return back(request, sid)
+
+    @app.post("/review/{sid}/approve-selected")
+    async def approve_selected(request: Request, sid: str):
+        s = get_session(sid)
+        form = await request.form()
+        only, rej = form.get("only"), form.get("reject")
+        if rej:
+            svc.reject(s, rej)
+            return back(request, sid, "riepilogo")
+        keys = [only] if only else form.getlist("k")
+        items = [(k, form.get(f"v|{k}")) for k in keys]
+        done, refused = svc.approve_many(s, items)
+        if refused:
+            s.notices.append(f"{len(refused)} correzione/i non applicate: serve scrivere il valore da inserire nel campo.")
+        elif done:
+            s.notices.append(f"{done} correzione/i applicate al Word.")
+        return back(request, sid, "riepilogo")
 
     @app.post("/review/{sid}/ack/{fid}")
     async def ack(request: Request, sid: str, fid: str):

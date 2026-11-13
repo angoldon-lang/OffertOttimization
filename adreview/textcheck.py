@@ -112,22 +112,35 @@ def check_typos(view: DocView, profile: Profile) -> list[Finding]:
     return out
 
 
-def check_placeholders(view: DocView, extra_texts: list[tuple[str, str]] | None = None) -> list[Finding]:
+BRACKET_PATTERNS = (PLACEHOLDER_PATTERNS[0][0], PLACEHOLDER_PATTERNS[1][0], PLACEHOLDER_PATTERNS[2][0])
+
+
+def _ph_in(text: str, loc: Location, params: dict | None) -> list[Finding]:
+    out, spans = [], []
+    for pat, what in PLACEHOLDER_PATTERNS:
+        for m in re.finditer(pat, text):
+            if pat in (r"_{4,}", r"\.{6,}"):
+                if any(a <= m.start() and m.end() <= b for a, b in spans):
+                    continue   # trattini dentro un segnaposto già segnalato
+                out.append(Finding("segnaposto", "Campo vuoto da compilare (firma/data?)", "Da verificare", loc,
+                                   f"«{m.group(0)[:30]}» – {what}", "Se non è un campo di firma per il cliente, compilarlo", kind="sostanziale"))
+                continue
+            spans.append((m.start(), m.end()))
+            ch = None
+            if params is not None and pat in BRACKET_PATTERNS and loc.kind != "header":
+                ch = _mk(params, m.group(0), "", "Segnaposto", "clausola", "rimuovere o sostituire il segnaposto", text)
+                ch.editable = True
+            out.append(Finding("segnaposto", "Segnaposto rimasto", "Errore", loc, f"«{m.group(0)}» – {what}",
+                               "Rimuovilo (Approva) o scrivi il testo da inserire al suo posto" if ch else "Compilare o rimuovere", ch, kind="sostanziale"))
+    return out
+
+
+def check_placeholders(view: DocView, extra_texts=None) -> list[Finding]:
     out = []
-    for loc, text in view.scan():
-        for pat, what in PLACEHOLDER_PATTERNS:
-            for m in re.finditer(pat, text):
-                if pat in (r"_{4,}", r"\.{6,}"):    # righe di firma/data: normali nelle condizioni di vendita, da verificare ma non errori
-                    out.append(Finding("segnaposto", "Campo vuoto da compilare (firma/data?)", "Da verificare", loc,
-                                       f"«{m.group(0)[:30]}» – {what}", "Se non è un campo di firma per il cliente, compilarlo", kind="sostanziale"))
-                    continue
-                out.append(Finding("segnaposto", "Segnaposto rimasto", "Errore", loc, f"«{m.group(0)}» – {what}",
-                                   "Compilare o rimuovere (nessuna modifica automatica: il contenuto va deciso dall'utente)", kind="sostanziale"))
-    for where, text in (extra_texts or []):
-        for pat, what in PLACEHOLDER_PATTERNS:
-            for m in re.finditer(pat, text):
-                out.append(Finding("segnaposto", "Segnaposto rimasto in " + where, "Errore", Location(kind=where),
-                                   f"«{m.group(0)}» – {what}", "Compilare o rimuovere", kind="sostanziale"))
+    for text, loc, params in units(view):
+        out += _ph_in(text, loc, params)
+    for loc, text in view.scan_extra():
+        out += _ph_in(text, loc, {"kind": "box"} if loc.kind == "box" else None)
     return out
 
 

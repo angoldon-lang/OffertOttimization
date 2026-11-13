@@ -165,7 +165,7 @@ def extract_fields(view: DocView, profile: Profile, has_prices: bool = False,
             else:
                 unreadable_date = unreadable_date or Occ(m.group("v")[:30], loc, text)
             continue
-        m = re.match(r"^\s*[A-ZÀ-Ý][\w' ]{2,25}\s*[,–—\-]\s*(?P<v>" + DATE_RE + r")\s*$", text, re.I)
+        m = re.match(r"^\s*[A-ZÀ-Ý][\w' ]{2,25}\s*[,–—\-]\s*(?P<v>" + DATE_RE + r")(?:\s+(?:" + DATE_RE + r"))*\s*$", text, re.I)
         if m:
             F["data_offerta"].occurrences.append(Occ(m.group("v"), loc, text, {"date": parse_date(m.group("v"))}))
             continue

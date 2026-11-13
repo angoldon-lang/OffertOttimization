@@ -11,6 +11,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from . import llm
+from .fixes import check_completeness
 from .checks import check_discount_text, check_econ, check_fields, check_references, check_year_summary, offer_expiry
 from .config import Profile, Settings
 from .docx_utils import Change, DocView, Location, apply_changes, norm, open_docx, save_docx
@@ -95,7 +96,7 @@ def review_state(f: Finding, s: Session) -> str:
             return "Rifiutata"
         if st == "failed":
             return "Non applicabile al Word"
-        return "Da approvare"
+        return "Da completare" if f.change.needs_value else "Da approvare"
     if f.auto_fixed:
         return "Sistemato automaticamente"
     if f.status == "Conforme":
@@ -198,12 +199,13 @@ class Service:
                                     "Le tabelle dentro altre tabelle sono conservate ma non analizzate.", "Verificare manualmente"))
         findings += check_fields(fields, today)
         findings += check_econ(econ, months is not None, bool(view.tables))
+        findings += check_completeness(view, fields, econ)
         findings += check_discount_text(view, econ) + check_year_summary(view, econ) + check_references(view)
 
         # 3) testo
         findings += check_typos(view, profile)
         extra = [("intestazione/piè di pagina", " ".join(p.text for sec in doc_a.sections for part in (sec.header, sec.footer) for p in part.paragraphs))]
-        findings += check_placeholders(view, extra)
+        findings += check_placeholders(view)
         corr = {}
         for c in s.approved:
             if c.category in ("totale", "prezzo"):
@@ -359,16 +361,40 @@ class Service:
         s.llm_done = True
 
     # ------------------------------------------------------------ azioni utente
-    def approve(self, s: Session, key: str) -> bool:
+    def _prepare(self, s: Session, key: str, value: str | None):
+        """Ritorna (change_originale, change_da_applicare) oppure None se non approvabile (manca il valore richiesto)."""
+        import dataclasses
         a = s.analysis
         ch = (a.changes.get(key) if a else None) or s.user_changes.get(key)
         if ch is None or s.change_state.get(key) == "approved":
-            return False
-        s.change_state[key] = "approved"
-        s.approved.append(ch)
-        s.user_changes.pop(key, None)
-        self.analyze(s)
-        return True
+            return None
+        final = ch
+        if value is not None and ch.editable and value != ch.after:
+            final = dataclasses.replace(ch, after=value, origin="utente" if ch.origin == "auto" else ch.origin)
+        if ch.needs_value and final.after.strip() == ch.after.strip():
+            return None
+        return ch, final
+
+    def approve(self, s: Session, key: str, value: str | None = None) -> bool:
+        return self.approve_many(s, [(key, value)])[0] > 0
+
+    def approve_many(self, s: Session, items: list[tuple[str, str | None]]) -> tuple[int, list[str]]:
+        """Approva più modifiche con un solo ricalcolo. Ritorna (approvate, chiavi_rifiutate_per_valore_mancante)."""
+        done, refused = 0, []
+        for key, value in items:
+            prep = self._prepare(s, key, value)
+            if prep is None:
+                refused.append(key)
+                continue
+            orig, final = prep
+            s.change_state[orig.key] = "approved"
+            s.change_state[final.key] = "approved"
+            s.approved.append(final)
+            s.user_changes.pop(orig.key, None)
+            done += 1
+        if done:
+            self.analyze(s)
+        return done, refused
 
     def reject(self, s: Session, key: str) -> None:
         s.change_state[key] = "rejected"

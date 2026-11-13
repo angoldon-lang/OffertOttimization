@@ -79,7 +79,7 @@ def header_roles(cells: list[str]) -> dict[int, str]:
     return roles
 
 
-TOTAL_START = re.compile(r"^(sub ?totale|sotto ?totale|totale|imponibile|importo totale|iva|i v a|sconto|parziale|canone totale|netto a pagare|importo complessivo)\b")
+TOTAL_START = re.compile(r"^(sub ?totale|sotto ?totale|totale|imponibile|importo totale|iva|i v a|sconto|parziale|canone totale|netto a pagare|importo complessivo|netto a voi|netto riservato|prezzo netto|prezzo totale)\b")
 
 
 def classify_total(label: str) -> str | None:
@@ -210,6 +210,7 @@ class Econ:
     gross_total: Decimal | None = None
     inferred_vat: Decimal | None = None                  # aliquota dedotta da gross/net delle righe
     has_net: bool = False
+    assumed: list = field(default_factory=list)          # righe con periodicità assunta (una tantum)
 
     def base_lines(self):
         return [l for l in self.lines if l.kind == "base"]
@@ -402,6 +403,11 @@ def extract_and_calc(view: DocView, months: int | None, confirmations: dict | No
                             ln.note = "L'importo riportato coincide con quantità × prezzo senza sconto: sconto non applicato?"
                     else:
                         ln.status = "Conforme"
+            elif unit_c is None and rep is not None:
+                ln.verifiable = False
+                ln.status = "Conforme"
+                ln.note = "Tabella senza colonna del prezzo unitario: l'importo di riga è usato come riportato."
+                ln.formula = "importo riportato (nessun prezzo unitario in tabella)"
             else:
                 ln.verifiable = False
                 ln.status = "Non verificabile"
@@ -415,6 +421,12 @@ def extract_and_calc(view: DocView, months: int | None, confirmations: dict | No
             if ln.kind == "base":
                 window.append(ln)
             e.lines.append(ln)
+    amb = [l for l in e.lines if l.kind == "base" and l.periodicity is None]
+    if amb and months is None and not e.periods and not any(l.periodicity not in (None, "una_tantum") for l in e.lines):
+        for l in amb:
+            l.periodicity, l.period_src = "una_tantum", "ipotesi"
+        e.assumed = [f"{l.source} «{l.desc[:40]}»" for l in amb]
+        e.ambiguous = [a for a in e.ambiguous if not any(x.split(' «')[0] in a for x in e.assumed)]
     both = [l for l in e.lines if l.net and l.gross]
     e.has_net = any(l.net is not None for l in e.lines)
     if both:

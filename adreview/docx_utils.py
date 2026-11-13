@@ -62,9 +62,27 @@ class Location:
         return " · ".join(parts) if parts else "Documento"
 
 
+def _hidden(r) -> bool:
+    rpr = r._r.rPr
+    return rpr is not None and rpr.find(qn("w:vanish")) is not None
+
+
+def vis(r) -> str:
+    """Testo visibile di un run (i run nascosti con w:vanish non contano)."""
+    return "" if _hidden(r) else r.text
+
+
+def visible_text(p: Paragraph) -> str:
+    out = []
+    for item in p.iter_inner_content():
+        runs = item.runs if hasattr(item, "runs") else [item]
+        out.extend(vis(r) for r in runs)
+    return "".join(out)
+
+
 @dataclass
 class Change:
-    kind: str                 # cell | para
+    kind: str                 # cell | para | box
     before: str
     after: str
     label: str
@@ -76,6 +94,8 @@ class Change:
     origin: str = "auto"      # auto | utente | ai
     ctx_before: str = ""
     reason: str = ""
+    editable: bool = False    # l'utente può modificare il testo «dopo» prima di approvare
+    needs_value: bool = False # serve un valore inserito dall'utente (l'approvazione senza valore non è ammessa)
 
     @property
     def key(self) -> str:
@@ -84,6 +104,8 @@ class Change:
 
     @property
     def ctx_after(self) -> str:
+        if not self.before:
+            return (self.ctx_before + self.after) if self.ctx_before and self.kind == "box" else self.after
         return self.ctx_before.replace(self.before, self.after, 1) if self.ctx_before else self.after
 
 
@@ -176,7 +198,7 @@ class DocView:
         for child in body.iterchildren():
             if child.tag == qn("w:p"):
                 p = Paragraph(child, doc._body)
-                text = p.text
+                text = visible_text(p)
                 sname = style_name(p)
                 p._after_heading = bool(self.headings)      # maiuscolo come titolo solo dopo un primo titolo vero (evita copertine)
                 lvl = heading_level(p, text, sname)
@@ -197,7 +219,7 @@ class DocView:
                     grid = 0
                     for c, tc in enumerate(tr.tc_lst):
                         cell = _Cell(tc, tbl)
-                        txt = "\n".join(pp.text for pp in cell.paragraphs).strip()
+                        txt = "\n".join(visible_text(pp) for pp in cell.paragraphs).strip()
                         span = tc.grid_span if hasattr(tc, "grid_span") else 1
                         cells.append(CInfo(tc, txt, r, c, grid, span or 1))
                         grid += span or 1
@@ -255,10 +277,12 @@ class DocView:
 def replace_in_paragraph(p: Paragraph, old: str, new: str) -> bool:
     """Sostituisce `old` con `new` preservando la formattazione del primo run coinvolto."""
     runs = p.runs
-    texts = [r.text for r in runs]
+    texts = [vis(r) for r in runs]
     full = "".join(texts)
+    if not old:
+        return append_text(p, new)
     i = full.find(old)
-    if i < 0 or not old:
+    if i < 0:
         return False
     end = i + len(old)
     pos = 0
@@ -284,6 +308,34 @@ def replace_in_paragraph(p: Paragraph, old: str, new: str) -> bool:
     return True
 
 
+def append_text(p: Paragraph, new: str) -> bool:
+    """Aggiunge testo in coda al paragrafo (cella vuota o riga da completare), ereditando la formattazione dell'ultimo run."""
+    if not new:
+        return False
+    vis_runs = [r for r in p.runs if not _hidden(r)]
+    if vis_runs:
+        import copy as _c
+        src = vis_runs[-1]._r
+        el = _c.deepcopy(src)
+        for k in list(el):
+            if k.tag != qn("w:rPr"):
+                el.remove(k)
+        t = el.makeelement(qn("w:t"), {})
+        t.text = new
+        t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+        el.append(t)
+        src.addnext(el)
+    else:
+        p.add_run(new)
+    return True
+
+
+def box_paragraphs(doc: Document):
+    """Paragrafi dentro caselle di testo (anche le copie di riserva VML)."""
+    for el in doc.element.body.xpath(".//w:txbxContent//w:p"):
+        yield Paragraph(el, doc._body)
+
+
 def apply_changes(doc: Document, changes: list[Change]) -> list[tuple[Change, bool]]:
     results = []
     paras = doc.paragraphs
@@ -295,11 +347,19 @@ def apply_changes(doc: Document, changes: list[Change]) -> list[tuple[Change, bo
                 ok = replace_in_paragraph(paras[ch.para], ch.before, ch.after)
             elif ch.kind == "cell":
                 tbl = tables[ch.table]
-                tc = tbl._tbl.tr_lst[ch.row].tc_lst[ch.col]
-                for pp in _Cell(tc, tbl).paragraphs:
-                    if replace_in_paragraph(pp, ch.before, ch.after):
-                        ok = True
+                tcs = tbl._tbl.tr_lst[ch.row].tc_lst
+                for tc in ([tcs[ch.col]] if ch.col is not None else list(tcs)):
+                    for pp in _Cell(tc, tbl).paragraphs[:1] if not ch.before else _Cell(tc, tbl).paragraphs:
+                        if replace_in_paragraph(pp, ch.before, ch.after):
+                            ok = True
+                            break
+                    if ok:
                         break
+            elif ch.kind == "box":
+                for pp in box_paragraphs(doc):
+                    t = visible_text(pp)
+                    if (not ch.ctx_before or t.strip() == ch.ctx_before.strip()) and (ch.before in t if ch.before else bool(t)):
+                        ok = replace_in_paragraph(pp, ch.before, ch.after) or ok
         except (IndexError, KeyError):
             ok = False
         results.append((ch, ok))

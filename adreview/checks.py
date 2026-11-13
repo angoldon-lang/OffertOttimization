@@ -9,6 +9,7 @@ from .docx_utils import Change, DocView, Location, norm
 from .econ import Econ, change_for_cell
 from .extract import FieldResult, add_months, fmt_date
 from .findings import Finding
+from .fixes import invalid_date_fix, loc_change
 from .money import D, find_numbers, fmt_eur, fmt_num, parse_number, parse_percent, quantize
 
 
@@ -54,6 +55,25 @@ def check_fields(fields: dict[str, FieldResult], today: date) -> list[Finding]:
             prop = "Chiarire la clausola (es. per il rinnovo: modalità, durata e termine di disdetta)" if k == "rinnovo" else "Verificare il dato"
         out.append(Finding("campi", f"{f.label}", f.status, loc, ev, prop, kind="sostanziale" if f.status != "Conforme" else "",
                            needs_input=f.status in ("Da verificare", "Non verificabile") and not f.present))
+    # allineamento di valori discordanti e correzione di date inesistenti (proposte approvabili)
+    for k in ("numero_offerta", "cliente", "data_offerta"):
+        f = fields[k]
+        if f.status == "Errore" and len(f.occurrences) > 1:
+            primary = f.occurrences[0]
+            for o in f.occurrences[1:]:
+                if o.value.strip() != primary.value.strip() and o.value in o.source:
+                    ch = loc_change(o.loc, o.source, o.value, primary.value, f"{f.label} discordante", "clausola", f"allineato a «{primary.value}» ({primary.loc.label})")
+                    out.append(Finding("campi", f"{f.label} discordante", "Errore", o.loc, f"«{o.value}» invece di «{primary.value}» ({primary.loc.label}).",
+                                       f"Allineare a «{primary.value}» (modifica il valore se è quello sbagliato)", ch, kind="sostanziale"))
+    vf = fields["validita"]
+    good = [o.value for o in vf.occurrences if "raw" not in o.data or o.data.get("date")]
+    for o in vf.occurrences:
+        if "raw" in o.data and not o.data.get("date") and o.value in o.source:
+            sug = invalid_date_fix(o.value, good)
+            ch = loc_change(o.loc, o.source, o.value, sug, "Data di validità inesistente", "data", "la data indicata non esiste in calendario") if sug != o.value else None
+            out.append(Finding("campi", "Data di validità inesistente", "Errore", o.loc,
+                               f"«{o.value}» non è una data valida" + (f"; altrove nel documento: {good[0]}" if good else ""),
+                               f"Sostituire con «{sug}» (modificabile)", ch, kind="sostanziale"))
     exp, note, eloc = offer_expiry(fields)
     v = fields["validita"]
     if v.present:
@@ -123,6 +143,10 @@ def check_econ(econ: Econ, months_known: bool, has_tables: bool) -> list[Finding
         out.append(Finding("calcoli", "Durata del contratto non indicata", "Da verificare", Location(kind="doc"),
                            "Ci sono voci ricorrenti ma la durata non è nota: totali per contratto non ricalcolabili.",
                            "Indicare/confermare la durata (mesi) nella schermata Calcoli", needs_input=True))
+    if econ.assumed:
+        out.append(Finding("calcoli", "Periodicità non indicata: assunta «una tantum»", "Da verificare", Location(kind="doc"),
+                           f"Nessuna indicazione di durata o periodicità nel documento ({len(econ.assumed)} righe): gli importi sono trattati come una tantum.",
+                           "Se sono canoni, indicare periodicità e durata nella scheda Calcoli", needs_input=True))
     if econ.inferred_vat is not None:
         out.append(Finding("calcoli", f"Aliquota IVA dedotta dalle righe: {fmt_num(econ.inferred_vat, 0 if econ.inferred_vat == econ.inferred_vat.to_integral_value() else 2)}%", "Conforme",
                            Location(kind="doc"), "Rapporto «Netto + IVA» / «Netto» uniforme sulle righe; l'aliquota non è dichiarata in modo esplicito."))

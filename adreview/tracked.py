@@ -11,7 +11,7 @@ from docx.oxml.ns import qn
 from docx.table import _Cell
 from docx.text.run import Run
 
-from .docx_utils import Change, DocView, Location, apply_changes
+from .docx_utils import Change, DocView, Location, apply_changes, box_paragraphs, vis, visible_text
 from .findings import Finding
 
 AUTHOR = "AD Review"
@@ -73,12 +73,33 @@ def _minimal(full: str, i: int, old: str, new: str) -> tuple[int, str, str]:
     return s0, o, n
 
 
+def tracked_append(p, new: str, ids: _Ids, date: str) -> Run | None:
+    if not new:
+        return None
+    parent = p._p
+    vis_runs = [r for r in p.runs if vis(r)]
+    src = vis_runs[-1]._r if vis_runs else None
+    el = _clone(src, new) if src is not None else _clone(OxmlElement("w:r"), new)
+    _strip_font(el)
+    w_ins = OxmlElement("w:ins")
+    for kk, v in (("w:id", ids.next()), ("w:author", AUTHOR), ("w:date", date)):
+        w_ins.set(qn(kk), v)
+    w_ins.append(el)
+    if src is not None and src.getparent() is parent:
+        src.addnext(w_ins)
+    else:
+        parent.append(w_ins)
+    return Run(el, p)
+
+
 def tracked_replace(p, old: str, new: str, ids: _Ids, date: str) -> Run | None:
     runs = p.runs
-    texts = [r.text for r in runs]
+    texts = [vis(r) for r in runs]
     full = "".join(texts)
+    if not old:
+        return tracked_append(p, new, ids, date)
     i = full.find(old)
-    if i < 0 or not old:
+    if i < 0:
         return None
     i, old, new = _minimal(full, i, old, new)
     end, pos = i + len(old), 0
@@ -99,6 +120,8 @@ def tracked_replace(p, old: str, new: str, ids: _Ids, date: str) -> Run | None:
     anchor = None
     for k in range(a, b + 1):
         r_el, T = runs[k]._r, texts[k]
+        if not T:
+            continue
         lo = off_a if k == a else 0
         hi = off_b if k == b else len(T)
         idx = parent.index(r_el)
@@ -155,11 +178,21 @@ def apply_changes_tracked(doc: Document, changes: list[Change]) -> list[tuple[Ch
                 run = tracked_replace(paras[ch.para], ch.before, ch.after, ids, date)
             elif ch.kind == "cell":
                 tbl = tables[ch.table]
-                tc = tbl._tbl.tr_lst[ch.row].tc_lst[ch.col]
-                for pp in _Cell(tc, tbl).paragraphs:
-                    run = tracked_replace(pp, ch.before, ch.after, ids, date)
+                tcs = tbl._tbl.tr_lst[ch.row].tc_lst
+                for tc in ([tcs[ch.col]] if ch.col is not None else list(tcs)):
+                    pars = _Cell(tc, tbl).paragraphs
+                    for pp in (pars[:1] if not ch.before else pars):
+                        run = tracked_replace(pp, ch.before, ch.after, ids, date)
+                        if run:
+                            break
                     if run:
                         break
+            elif ch.kind == "box":
+                for pp in box_paragraphs(doc):
+                    t = visible_text(pp)
+                    if (not ch.ctx_before or t.strip() == ch.ctx_before.strip()) and (ch.before in t if ch.before else bool(t)):
+                        r_ = tracked_replace(pp, ch.before, ch.after, ids, date)
+                        run = run or r_
         except (IndexError, KeyError):
             run = None
         out.append((ch, run))

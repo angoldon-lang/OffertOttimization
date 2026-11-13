@@ -1,11 +1,81 @@
 {% extends "review_base.html" %}
 {% from "_macros.html" import badge %}
+{% macro fixrow(i, f, a, s, checked) %}
+{% set ch = f.change %}
+<tr class="row-{{ f.status|cls }}">
+  <td><input type="checkbox" name="k" value="{{ ch.key }}" {{ 'checked' if checked }}></td>
+  <td><b>{{ f.title }}</b><div class="loc">{{ f.location.label }}</div></td>
+  <td>
+    {% if ch.editable %}
+      <div class="muted">Prima: {{ ch|diff_before }}</div>
+      <label class="valfield">{{ 'Scrivi il valore da inserire' if ch.needs_value else 'Dopo (modificabile)' }}
+        <input name="v|{{ ch.key }}" value="{{ ch.after }}" size="38" {% if ch.needs_value %}placeholder="obbligatorio"{% endif %}></label>
+    {% else %}
+      <div>Prima: {{ ch|diff_before }}</div><div>Dopo: {{ ch|diff_after }}</div>
+    {% endif %}
+  </td>
+  <td class="muted">{{ f.evidence }}{% if ch.reason %}<br>{{ ch.reason }}{% endif %}</td>
+  <td class="nowrap"><button class="btn ok small" name="only" value="{{ ch.key }}">Approva</button>
+      <button class="btn small" name="reject" value="{{ ch.key }}" formnovalidate>Rifiuta</button></td>
+</tr>
+{% endmacro %}
+
 {% block content %}
-<p class="notice priv">Riepilogo INTERNO (include il margine): non destinato al cliente.</p>
+<div class="kpis">
+  <div class="kpi {{ 'ok' if not ready else 'warn' }}"><b>{{ ready|length }}</b> correzioni pronte da approvare</div>
+  <div class="kpi {{ 'ok' if not needs else 'err' }}"><b>{{ needs|length }}</b> mancanze da completare</div>
+  <div class="kpi {{ 'ok' if not manual else 'warn' }}"><b>{{ manual|length }}</b> punti da verificare a mano</div>
+  <div class="kpi ok"><b>{{ a.history|length }}</b> correzioni già applicate</div>
+</div>
+<p class="muted">Approvare = riportare la correzione nel Word (nessuna modifica avviene prima). Dopo ogni approvazione tutto viene ricalcolato. Preferisci lavorare in Word? Scarica il file «in revisione» dalla scheda <a href="/review/{{ s.id }}/export">Esporta</a>.</p>
+
+<form method="post" action="/review/{{ s.id }}/approve-selected">
+<h2>Correzioni pronte</h2>
+{% if ready %}
+<table class="grid fixes">
+  <thead><tr><th><input type="checkbox" checked onclick="document.querySelectorAll('.fixes input[name=k]').forEach(c=>{if(this.closest('table')===c.closest('table'))c.checked=this.checked})" title="Seleziona tutte"></th><th>Cosa</th><th>Correzione</th><th>Perché</th><th></th></tr></thead>
+  <tbody>{% for i, f in ready %}{{ fixrow(i, f, a, s, true) }}{% endfor %}</tbody>
+</table>
+<button class="btn ok primary">Approva le correzioni selezionate</button>
+{% else %}<p class="ok-text">✔ Nessuna correzione in attesa.</p>{% endif %}
+
+<h2>Mancanze da completare (serve il tuo input)</h2>
+{% if needs %}
+<p class="muted">Scrivi il valore nel campo e approva: viene inserito nel Word nel punto indicato.</p>
+<table class="grid fixes">
+  <thead><tr><th></th><th>Cosa manca</th><th>Proposta</th><th>Dettaglio</th><th></th></tr></thead>
+  <tbody>{% for i, f in needs %}{{ fixrow(i, f, a, s, false) }}{% endfor %}</tbody>
+</table>
+<button class="btn primary">Applica i valori compilati e selezionati</button>
+{% else %}<p class="ok-text">✔ Nessuna mancanza con punto di inserimento noto.</p>{% endif %}
+</form>
+
+<h2>Da verificare a mano ({{ manual|length }})</h2>
+{% if manual %}
+<table class="grid">
+  <thead><tr><th>Esito</th><th>Cosa</th><th>Dove</th><th>Che cosa fare</th><th></th></tr></thead>
+  <tbody>
+  {% for i, f in manual[:15] %}
+  <tr class="row-{{ f.status|cls }}"><td>{{ badge(f.status) }}</td><td><b>{{ f.title }}</b><div class="muted">{{ f.evidence[:220] }}</div></td><td class="loc">{{ f.location.label }}</td>
+      <td>{{ f.proposal }}</td>
+      <td><form method="post" action="/review/{{ s.id }}/ack/{{ f.id }}?next=riepilogo" class="inline"><input type="hidden" name="on" value="1"><button class="btn small">Preso in carico</button></form></td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if manual|length > 15 %}<p class="muted">…e altri {{ manual|length - 15 }}: vedi <a href="/review/{{ s.id }}/controlli">Tutti i controlli</a>.</p>{% endif %}
+{% else %}<p class="ok-text">✔ Niente da verificare a mano.</p>{% endif %}
+
+{% if rejected %}<h2>Correzioni rifiutate</h2>
+<ul>{% for i, f in rejected %}<li>{{ f.title }} – {{ f.location.label }}
+  <form method="post" action="/review/{{ s.id }}/change/{{ f.change.key }}/reopen?next=riepilogo" class="inline"><button class="btn small">Riapri</button></form></li>{% endfor %}</ul>{% endif %}
+
+<p class="notice priv">Il riepilogo commerciale qui sotto è INTERNO (include il margine): non destinato al cliente.</p>
 {% for sec, rows in a.summary.items() %}
-<h2>{{ sec }}</h2>
+<details {{ 'open' if sec in ('Valori','Validità offerta') }}>
+<summary><h2 style="display:inline">{{ sec }}</h2></summary>
 <table class="grid"><thead><tr><th>Campo</th><th>Valore</th><th>Fonte nell'offerta</th><th>Stato</th><th>Note</th></tr></thead><tbody>
 {% for r in rows %}<tr><td>{{ r.label }}</td><td><b>{{ r.value }}</b></td><td class="loc">{{ r.source }}</td><td>{{ badge(r.status) if r.status in ('Conforme','Da verificare','Errore','Non verificabile') else r.status }}</td><td class="muted">{{ r.note }}</td></tr>{% endfor %}
 </tbody></table>
+</details>
 {% endfor %}
 {% endblock %}

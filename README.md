@@ -46,6 +46,16 @@ docker compose up -d --build        # http://127.0.0.1:18080
 - OCR per PDF scansionati: `WITH_OCR=1 docker compose up -d --build`.
 - Stop: `docker compose down` (le sessioni sono in memoria e si perdono).
 
+## Riepilogo e correzioni (schermata iniziale)
+
+Dopo il caricamento si apre **Riepilogo e correzioni**: in alto i contatori, poi
+1. **Correzioni pronte** – refusi, spazi, denominazioni, importi, date, segnaposto da rimuovere… ognuna con prima/dopo (modificabile) e **Approva** / **Rifiuta**, oppure «Approva le correzioni selezionate» in un colpo solo;
+2. **Mancanze da completare** – campi senza valore (es. «VALIDITÀ CONTRATTO» vuoto), destinatario «C.A.» senza nome, punti elenco «…»: scrivi il valore nel campo e approva, viene inserito nel Word nel punto indicato (anche dentro caselle di testo);
+3. **Da verificare a mano** – ciò che non ha un punto di inserimento sicuro (sezioni assenti, riferimenti a paragrafi mancanti, rinnovo «da concordare»…), con l'indicazione di cosa fare;
+4. il **riepilogo commerciale** interno.
+
+Nulla viene scritto nel Word prima dell'approvazione. Il testo nascosto (`vanish`) viene ignorato. Il profilo **«AD Consulting – offerte»** usa le sezioni delle vostre offerte (Allegati, Presentazione azienda, Premessa, Oggetto, Offerta Economica, Condizioni di vendita); il profilo demo resta per i documenti di prova.
+
 ## Flusso utente
 
 1. **Carica** offerta (obbligatoria), template, quotazioni, costi diretti interni (es. giornate × costo giornaliero), scegli il profilo. Il template è il riferimento per stili/struttura; il profilo fornisce le regole mancanti (logo, palette, checklist campi, sezioni obbligatorie).
