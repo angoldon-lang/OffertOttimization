@@ -1,0 +1,63 @@
+{% extends "review_base.html" %}
+{% block content %}
+<p class="notice">Trasforma l'offerta <b>tradizionale</b> nel formato <b>evoluto</b>: Oggetto a elenco, sezione «Soluzione proposta», tabella economica con prezzi unitari e totale, nota IVA, condizioni compilate.
+  I valori sono proposti dal documento caricato: correggi/completa, controlla l'<b>anteprima</b> e poi <b>applica</b>. La formattazione segue le offerte AD (Arial, blu istituzionale).
+  {% if s.evolved %}<br><b>Offerta già evoluta.</b> Le modifiche si ricalcolano sempre dal documento originale.{% endif %}</p>
+
+<form method="post" action="/review/{{ s.id }}/evolvi">
+<h2>1 · Oggetto (una voce per riga)</h2>
+<textarea name="oggetto" rows="6" class="wide">{{ ev.oggetto|join('\n') }}</textarea>
+
+<h2>2 · Soluzione proposta</h2>
+<label class="valfield">Titolo della sezione<input name="sol_title" value="{{ ev.solution_title }}" class="wide"></label>
+<label class="valfield">Contenuto (mini-formato sotto)
+  <textarea name="sol_markup" rows="16" class="wide mono">{{ ev.solution_markup }}</textarea></label>
+<details><summary>Come si scrive</summary>
+<pre class="muted">Testo libero: righe consecutive = un paragrafo, riga vuota = nuovo paragrafo
+## Sottotitolo
+- Termine – descrizione            (punto elenco con parte iniziale in grassetto)
+| Parametro | Valore |            (tabella; la prima riga è l'intestazione)
+| Throughput | 8,5 Gbps |
+&gt; nota piccola in corsivo grigio</pre></details>
+<p class="muted">{{ draft_text }}</p>
+{% if settings.llm_enabled %}<label class="check"><input type="checkbox" name="ai_consent" {{ 'checked' if s.llm_consent }}> Consento l'invio di codici e descrizioni delle righe (non i prezzi)</label>
+<button class="btn" name="action" value="ai">Genera bozza con AI</button>{% endif %}
+
+<h2>3 · Offerta economica</h2>
+<p class="muted">Compila <b>q.tà</b> e <b>prezzo unitario</b> (l'importo si calcola), oppure lascia il prezzo vuoto e indica l'importo (il prezzo si ricava). Aggiungi righe nuove (es. «Supporto sistemistico annuale») nelle righe vuote in fondo.</p>
+<table class="grid econ">
+  <thead><tr><th>Titolo / codice</th><th>Descrizione</th><th>Q.tà</th><th>Prezzo unitario €</th><th>Importo €</th></tr></thead>
+  <tbody>
+  {% for r in ev.econ_rows %}
+  <tr><td><input name="r|{{ loop.index0 }}|title" value="{{ r.title }}"></td>
+      <td><textarea name="r|{{ loop.index0 }}|desc" rows="2">{{ r.desc }}</textarea></td>
+      <td><input name="r|{{ loop.index0 }}|qty" size="4" value="{{ r.qty|num(0 if r.qty is not none and r.qty == r.qty.to_integral_value() else 2) if r.qty is not none else '' }}"></td>
+      <td><input name="r|{{ loop.index0 }}|unit" size="10" value="{{ r.unit|num if r.unit is not none else '' }}"></td>
+      <td><input name="r|{{ loop.index0 }}|amount" size="10" value="{{ r.amount|num if r.amount is not none else '' }}"></td></tr>
+  {% endfor %}
+  {% for k in range(3) %}{% set i = ev.econ_rows|length + k %}
+  <tr class="blank"><td><input name="r|{{ i }}|title" placeholder="nuova riga"></td><td><textarea name="r|{{ i }}|desc" rows="2"></textarea></td>
+      <td><input name="r|{{ i }}|qty" size="4"></td><td><input name="r|{{ i }}|unit" size="10"></td><td><input name="r|{{ i }}|amount" size="10"></td></tr>
+  {% endfor %}
+  <tr class="total"><td colspan="4"><b>Netto a Voi riservato (IVA esclusa)</b></td><td><b>{{ ev.total|eur }}</b></td></tr>
+  </tbody>
+</table>
+<label class="valfield">Nota sotto la tabella<input name="econ_note" value="{{ ev.econ_note }}" class="wide"></label>
+
+<h2>4 · Condizioni di vendita (celle vuote da compilare)</h2>
+{% if ev.conditions %}
+{% for lab, val in ev.conditions.items() %}<label class="valfield">{{ lab }}<input name="cond|{{ lab }}" value="{{ val }}" class="wide"></label>{% endfor %}
+{% else %}<p class="ok-text">✔ Nessuna cella vuota nelle condizioni.</p>{% endif %}
+<label class="check"><input type="checkbox" name="remove_refs" checked> Rimuovi i rimandi a paragrafi inesistenti (es. «Perimetro: si veda il paragrafo…»)</label>
+
+<p style="margin-top:16px">
+  <button class="btn" name="action" value="preview">Aggiorna anteprima e totali</button>
+  <button class="btn ok primary" name="action" value="apply">Applica all'offerta</button>
+  {% if s.evolved %}<button class="btn" name="action" value="revert" formnovalidate onclick="return confirm('Tornare all\'offerta originale?')">Torna all'originale</button>{% endif %}
+</p>
+</form>
+<h2>Scarica</h2>
+<p><a class="btn" href="/review/{{ s.id }}/download/evoluzione.docx">DOCX con l'evoluzione in modifiche tracciate</a>
+   <a class="btn" href="/review/{{ s.id }}/download/cliente.docx">DOCX pulito (offerta attuale + correzioni approvate)</a></p>
+<p class="muted">L'indice si aggiorna all'apertura in Word (conferma «aggiorna i campi»). Dopo «Applica», i controlli e le correzioni (scheda Riepilogo) sono rieseguiti sul nuovo documento.</p>
+{% endblock %}

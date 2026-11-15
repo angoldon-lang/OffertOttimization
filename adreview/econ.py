@@ -29,7 +29,7 @@ def detect_periodicity(text: str) -> str | None:
         return "semestrale"
     if re.search(r"annu|\banno\b|per anno|all anno", t):
         return "annuale"
-    if re.search(r"triennal|biennal|pluriennal|intero contratto|totale contratto|durata contrattuale|per tutta la durata|\b\d+ (anni|mesi)\b", t):
+    if re.search(r"triennal|biennal|pluriennal|intero contratto|totale contratto|durata contrattuale|per tutta la durata|\b\d+ (anni|mesi|years|months)\b", t):
         return "contratto"
     return None
 
@@ -422,7 +422,9 @@ def extract_and_calc(view: DocView, months: int | None, confirmations: dict | No
                 window.append(ln)
             e.lines.append(ln)
     amb = [l for l in e.lines if l.kind == "base" and l.periodicity is None]
-    if amb and months is None and not e.periods and not any(l.periodicity not in (None, "una_tantum") for l in e.lines):
+    explicit = any(l.periodicity not in (None, "una_tantum") and l.period_src == "documento" for l in e.lines)
+    if amb and not e.periods and ((months is None and not any(l.periodicity not in (None, "una_tantum") for l in e.lines)) or explicit):
+        # nessun indizio di ricorrenza (o tabella mista con altre righe esplicitamente ricorrenti): le righe senza indicazione sono una tantum
         for l in amb:
             l.periodicity, l.period_src = "una_tantum", "ipotesi"
         e.assumed = [f"{l.source} «{l.desc[:40]}»" for l in amb]

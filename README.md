@@ -46,6 +46,16 @@ docker compose up -d --build        # http://127.0.0.1:18080
 - OCR per PDF scansionati: `WITH_OCR=1 docker compose up -d --build`.
 - Stop: `docker compose down` (le sessioni sono in memoria e si perdono).
 
+## Evolvi offerta (da tradizionale a estesa)
+
+La scheda **Evolvi offerta** trasforma un'offerta *tradizionale* (tabella con codici e descrizioni grezze, Oggetto minimale, condizioni vuote) nel formato *esteso*:
+1. **Oggetto** a elenco (una voce per riga, proposta dalle righe della tabella);
+2. **Soluzione proposta**: nuova sezione (con titolo proposto dal prodotto principale) scritta in un mini-formato (paragrafi, `## sottotitoli`, `- Termine – descrizione`, tabella `| Parametro | Valore |`, `> note`). Parte da uno scheletro (le parentesi quadre non compilate vengono poi segnalate come segnaposto); i servizi sono precompilati dalle righe di supporto/installazione. Con l'AI configurata e il tuo consenso c'è «Genera bozza con AI» (invia solo codici, descrizioni e quantità, **mai prezzi**), sempre da rileggere;
+3. **Offerta economica** ricostruita con titolo/codice + descrizione, Q.tà, **prezzo unitario** e importo: la q.tà mancante è dedotta dalle altre righe, il prezzo unitario = importo ÷ q.tà, puoi aggiungere righe (es. «Supporto sistemistico annuale») e il totale «Netto a Voi riservato (IVA esclusa)» si ricalcola; nota sotto la tabella (es. durata 36 mesi);
+4. **Condizioni di vendita**: compila le celle vuote (pagamento, validità contratto…), rimuove i rimandi a paragrafi inesistenti.
+
+«Aggiorna anteprima» ricalcola i totali, «Applica» scrive il risultato nel documento di lavoro (sempre ricalcolato dall'originale, «Torna all'originale» ripristina) e riesegue tutti i controlli. Il file «evoluzione.docx» contiene le stesse modifiche come **revisioni tracciate** (voci vecchie barrate, nuove inserite) per accettarle/rifiutarle in Word. La formattazione ricalca le offerte AD (Arial, blu 0067B4/3983C5); l'indice si aggiorna all'apertura in Word.
+
 ## Riepilogo e correzioni (schermata iniziale)
 
 Dopo il caricamento si apre **Riepilogo e correzioni**: in alto i contatori, poi

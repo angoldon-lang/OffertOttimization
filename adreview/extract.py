@@ -137,6 +137,25 @@ def extract_fields(view: DocView, profile: Profile, has_prices: bool = False,
     if not F["oggetto"].occurrences:
         label_value(r"^\s*(?:offerta|preventivo|proposta)\s+(?:commerciale\s+)?per\s+(?P<v>.+)$", "oggetto", nextline=False)
 
+    if not F["oggetto"].occurrences:     # sezione «Oggetto»: prima voce dopo la frase introduttiva
+        for h in view.headings:
+            if norm(h.text) == "oggetto":
+                started = False
+                for kind, it in view.items:
+                    if kind == "p" and it is h:
+                        started = True
+                        continue
+                    if not started:
+                        continue
+                    if kind == "p":
+                        if it.heading_level:
+                            break
+                        t = it.text.strip()
+                        if t and not re.match(r"(?i)facendo\s+seguito|con\s+la\s+presente|in\s+riferimento", t):
+                            F["oggetto"].occurrences.append(Occ(t[:140], Location(h.text, paragraph=it.idx, kind="par"), t))
+                            break
+                break
+
     # --- numero offerta
     tok = r"(?P<v>[A-Za-z0-9][A-Za-z0-9/_\-.]*)"
     n_pats = [
@@ -274,6 +293,8 @@ def extract_fields(view: DocView, profile: Profile, has_prices: bool = False,
     # --- validità
     val = F["validita"]
     for loc, text in items:
+        if re.search(r"validit[àa]\s+(?:del\s+)?contratto", text, re.I):
+            continue               # è la durata del contratto, non la validità dell'offerta
         m = re.search(r"(?:validit[àa]|valid[ao])[^.\n]{0,60}?(?P<n>\d{1,3})\s*(?P<u>giorni|gg|giorno|mesi)\b", text, re.I)
         if m:
             clear = bool(re.search(r"dalla\s+data|dalla\s+presente|dall['’]\s*emissione|dalla\s+emissione|data\s+(?:di\s+)?(?:emissione|invio|dell['’]\s*offerta)", text, re.I))

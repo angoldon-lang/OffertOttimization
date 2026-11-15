@@ -11,6 +11,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from . import llm
+from . import evolve as ev
 from .fixes import check_completeness
 from .checks import check_discount_text, check_econ, check_fields, check_references, check_year_summary, offer_expiry
 from .config import Profile, Settings
@@ -21,7 +22,7 @@ from .findings import CONTROLS, SEVERITY, Finding, worst
 from .formatter import apply_format, verify_docx
 from .margin import Alloc, MarginResult, SaleRow, check_quote_validity, compute_margin, sales_from_econ, suggest_allocs
 from .margin_xlsx import export_margin_xlsx
-from .money import D, fmt_eur, parse_number, quantize
+from .money import D, fmt_eur, fmt_num, parse_number, quantize
 from .report import build_report_docx
 from .suppliers import CostLine, QuoteResult, parse_quotation
 from .summary import build_summary
@@ -61,6 +62,9 @@ class Session:
     llm_done: bool = False
     notices: list[str] = field(default_factory=list)
     today: date | None = None
+    original_bytes: bytes | None = None          # offerta tradizionale originale, se è stata «evoluta»
+    evolve_inputs: "ev.EvolveInputs | None" = None
+    evolved: bool = False
     analysis: "Analysis | None" = None
 
 
@@ -506,6 +510,61 @@ class Service:
                 a.suggested = False
                 s.allocs[cid] = a
         self.analyze(s)
+
+    # ------------------------------------------------------------ evolvi offerta
+    def evolve_form(self, s: Session) -> "ev.EvolveInputs":
+        """Valori proposti (dalla tradizionale) o quelli già inseriti dall'utente."""
+        if s.evolve_inputs is not None:
+            return s.evolve_inputs
+        base = s.original_bytes or s.offer_bytes
+        a = s.analysis
+        if s.original_bytes is not None:      # analisi riferita al documento evoluto: ricalcola sull'originale
+            a = self._quick(s, base)
+        return ev.defaults_from_doc(DocView(open_docx(base)), a.econ, a.fields)
+
+    def _quick(self, s: Session, data: bytes):
+        profile = self.profiles[s.profile_id]
+        view = DocView(open_docx(data))
+        f0 = extract_fields(view, profile)
+        econ = extract_and_calc(view, f0["durata"].data.get("months"), {}, *self._dec(s)[:2])
+        return type("Q", (), {"econ": econ, "fields": f0})
+
+    def evolve_apply(self, s: Session, inp: "ev.EvolveInputs") -> dict:
+        base = s.original_bytes or s.offer_bytes
+        doc = open_docx(base)
+        rep = ev.apply_evolution(doc, inp, tracked=False)
+        s.original_bytes, s.offer_bytes = base, save_docx(doc)
+        s.evolved, s.evolve_inputs = True, inp
+        s.approved, s.change_state, s.user_changes, s.acks = [], {}, {}, set()
+        s.notices.append("Offerta evoluta: le correzioni già approvate sono state azzerate perché il documento è cambiato; i controlli sono stati rieseguiti.")
+        s.notices += rep["avvisi"]
+        self.analyze(s)
+        return rep
+
+    def evolve_revert(self, s: Session) -> None:
+        if s.original_bytes is not None:
+            s.offer_bytes, s.original_bytes, s.evolved = s.original_bytes, None, False
+            s.approved, s.change_state, s.user_changes, s.acks = [], {}, {}, set()
+            self.analyze(s)
+
+    def export_evolution_tracked(self, s: Session) -> bytes:
+        """Evoluzione con modifiche tracciate (inserimenti/cancellazioni) rispetto all'offerta tradizionale."""
+        base = s.original_bytes or s.offer_bytes
+        inp = s.evolve_inputs or self.evolve_form(s)
+        doc = open_docx(base)
+        ev.apply_evolution(doc, inp, tracked=True)
+        enable_track_revisions(doc)
+        return save_docx(doc)
+
+    def evolve_draft_ai(self, s: Session, inp: "ev.EvolveInputs") -> str | None:
+        if not (s.llm_consent and self.settings.llm_enabled):
+            return None
+        rows = [(r.title, r.desc, fmt_num(r.qty, 0) if r.qty is not None else "") for r in ev.normalize_rows(inp.econ_rows)]
+        try:
+            return llm.draft_solution(self.settings, rows, self.llm_transport)
+        except Exception as exc:
+            s.notices.append(f"Servizio AI non raggiungibile ({exc.__class__.__name__}): usa lo scheletro e scrivi a mano.")
+            return None
 
     # ------------------------------------------------------------ export
     def export_client_docx(self, s: Session) -> bytes:

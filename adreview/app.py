@@ -19,11 +19,12 @@ from .econ import KINDS, PERIODS
 from .extract import fmt_date
 from .findings import CONTROLS
 from .margin import Alloc
+from . import evolve as evo
 from .money import fmt_eur, fmt_num, fmt_pct, parse_number, quantize
 from .service import Service
 
 BASE = Path(__file__).resolve().parent
-TABS = [("riepilogo", "Riepilogo e correzioni"), ("controlli", "Tutti i controlli"), ("calcoli", "Calcoli"), ("template", "Template e impaginazione"),
+TABS = [("riepilogo", "Riepilogo e correzioni"), ("evolvi", "Evolvi offerta"), ("controlli", "Tutti i controlli"), ("calcoli", "Calcoli"), ("template", "Template e impaginazione"),
         ("margine", "Margine (riservato)"), ("export", "Esporta")]
 COST_PERIODS = {"una_tantum": "Una tantum", "annuale": "Annuale", "mensile": "Mensile", "trimestrale": "Trimestrale",
                 "semestrale": "Semestrale", "periodo_quotazione": "Totale per il periodo della quotazione"}
@@ -145,7 +146,10 @@ def create_app(settings: Settings | None = None, service: Service | None = None)
         manual = [(i, f) for i, f in enumerate(a.findings) if not f.change and f.status in ("Errore", "Da verificare", "Non verificabile")
                   and not f.auto_fixed and f.id not in s.acks and f.title not in ("Riga non ricalcolabile", "Periodicità/unità da confermare")
                   and f.check not in ("margine",)]
-        return render(request, f"{tab}.html", fixes=fixes, ready=sorted([x for x in fixes if not x[1].change.needs_value], key=lambda x: x[1].change.category == "testo"),
+        extra = {}
+        if tab == "evolvi":
+            extra = dict(ev=svc.evolve_form(s), draft_text=llm.draft_disclosure(settings))
+        return render(request, f"{tab}.html", **extra, fixes=fixes, ready=sorted([x for x in fixes if not x[1].change.needs_value], key=lambda x: x[1].change.category == "testo"),
                       needs=[x for x in fixes if x[1].change.needs_value], manual=manual, rejected=rejected, s=s, a=a, tab=tab, rows=rows, flt_status=flt_status, flt_check=flt_check,
                       show_all=q.get("tutti") == "1", profile=svc.profiles[s.profile_id], settings=settings, ai_text=llm.disclosure(settings),
                       n_conformi=len([f for f in a.findings if f.status == "Conforme"]))
@@ -180,6 +184,48 @@ def create_app(settings: Settings | None = None, service: Service | None = None)
         elif done:
             s.notices.append(f"{done} correzione/i applicate al Word.")
         return back(request, sid, "riepilogo")
+
+    def parse_evolve(form) -> "evo.EvolveInputs":
+        inp = evo.EvolveInputs(oggetto=[l.strip() for l in (form.get("oggetto") or "").splitlines() if l.strip()],
+                               solution_title=(form.get("sol_title") or "").strip(), solution_markup=form.get("sol_markup") or "",
+                               econ_note=(form.get("econ_note") or "").strip(), remove_dangling_refs=form.get("remove_refs") == "on")
+        for k, v in form.items():
+            if k.startswith("cond|"):
+                inp.conditions[k[5:]] = v.strip()
+        idx = sorted({int(k.split("|")[1]) for k in form.keys() if k.startswith("r|")})
+        dec_ = lambda x: parse_number(x) if x and x.strip() else None
+        for i in idx:
+            g = lambda f: (form.get(f"r|{i}|{f}") or "")
+            inp.econ_rows.append(evo.EconRow(g("title").strip(), g("desc").strip(), dec_(g("qty")), dec_(g("unit")), dec_(g("amount"))))
+        return inp
+
+    @app.post("/review/{sid}/evolvi")
+    async def evolvi(request: Request, sid: str):
+        s = get_session(sid)
+        form = await request.form()
+        action = form.get("action", "preview")
+        if action == "revert":
+            svc.evolve_revert(s)
+            s.evolve_inputs = None
+            return RedirectResponse(f"/review/{sid}/evolvi", status_code=303)
+        inp = parse_evolve(form)
+        inp.econ_rows = evo.normalize_rows(inp.econ_rows)
+        if action == "ai":
+            s.llm_consent = form.get("ai_consent") == "on" and settings.llm_enabled
+            draft = svc.evolve_draft_ai(s, inp)
+            if draft:
+                inp.solution_markup = draft
+                s.notices.append("Bozza AI inserita nel campo «Soluzione proposta»: rileggila e correggila prima di applicare.")
+            elif not settings.llm_enabled:
+                s.notices.append("Servizio AI non configurato: scrivi la soluzione a mano o parti dallo scheletro.")
+            s.evolve_inputs = inp
+        elif action == "apply":
+            rep = svc.evolve_apply(s, inp)
+            s.notices.append("Offerta evoluta applicata. Scarica il DOCX dalla scheda Esporta, oppure l'evoluzione con modifiche tracciate da qui.")
+            return RedirectResponse(f"/review/{sid}/evolvi", status_code=303)
+        else:
+            s.evolve_inputs = inp
+        return RedirectResponse(f"/review/{sid}/evolvi", status_code=303)
 
     @app.post("/review/{sid}/ack/{fid}")
     async def ack(request: Request, sid: str, fid: str):
@@ -308,6 +354,8 @@ def create_app(settings: Settings | None = None, service: Service | None = None)
         stem = re.sub(r"\.docx$", "", s.offer_name, flags=re.I)
         if what == "cliente.docx":
             return attach(svc.export_client_docx(s), f"{stem} - revisionata.docx", DOCX)
+        if what == "evoluzione.docx":
+            return attach(svc.export_evolution_tracked(s), f"{stem} - evoluzione (modifiche tracciate).docx", DOCX)
         if what == "revisione.docx":
             return attach(svc.export_tracked(s), f"{stem} - in revisione.docx", DOCX)
         if what == "report.docx":

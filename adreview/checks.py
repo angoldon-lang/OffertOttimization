@@ -145,7 +145,7 @@ def check_econ(econ: Econ, months_known: bool, has_tables: bool) -> list[Finding
                            "Indicare/confermare la durata (mesi) nella schermata Calcoli", needs_input=True))
     if econ.assumed:
         out.append(Finding("calcoli", "Periodicità non indicata: assunta «una tantum»", "Da verificare", Location(kind="doc"),
-                           f"Nessuna indicazione di durata o periodicità nel documento ({len(econ.assumed)} righe): gli importi sono trattati come una tantum.",
+                           f"{len(econ.assumed)} righe senza alcuna indicazione di periodicità (nessuna durata o ricorrenza associata): trattate come una tantum.",
                            "Se sono canoni, indicare periodicità e durata nella scheda Calcoli", needs_input=True))
     if econ.inferred_vat is not None:
         out.append(Finding("calcoli", f"Aliquota IVA dedotta dalle righe: {fmt_num(econ.inferred_vat, 0 if econ.inferred_vat == econ.inferred_vat.to_integral_value() else 2)}%", "Conforme",
@@ -263,7 +263,10 @@ def check_references(view: DocView) -> list[Finding]:
             t = norm(m.group("t"))
             if not t or any(t == h or t in h or (h and h in t) for h in heads):
                 continue
-            out.append(Finding("coerenza", "Riferimento a un paragrafo non presente nel documento", "Da verificare", Location(p.section, paragraph=p.idx, kind="par"),
+            loc = Location(p.section, paragraph=p.idx, kind="par")
+            whole = re.match(r"(?i)^\s*(?:perimetro\s*:\s*)?(?:si\s+veda|vedi|cfr\.?)[^\n]*$", p.text.strip())
+            ch = loc_change(loc, p.text, p.text.strip(), "", "Rimando a paragrafo inesistente", "clausola", "il paragrafo richiamato non esiste") if whole else None
+            out.append(Finding("coerenza", "Riferimento a un paragrafo non presente nel documento", "Da verificare", loc,
                                f"«{m.group(0).strip()[:90]}»: nel documento non c'è un titolo «{m.group('t').strip()}».",
-                               "Aggiungere il paragrafo richiamato o correggere il riferimento", kind="sostanziale"))
+                               "Rimuovere il rimando (Approva) oppure aggiungere il paragrafo richiamato" if ch else "Aggiungere il paragrafo richiamato o correggere il riferimento", ch, kind="sostanziale"))
     return out
